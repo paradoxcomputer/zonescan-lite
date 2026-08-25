@@ -1,0 +1,36 @@
+{
+  "name": "zonescan_lite",
+  "display_name": "ZoneScan Lite",
+  "version": "0.3.0",
+  "author": "paradox.computer",
+  "license": "MIT OR Apache-2.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "explorer",
+  "description": "ZoneScan Lite: a Logos Execution Zone block explorer",
+  "main": "zonescan_lite_plugin",
+  "icon": "src/qml/icons/icon.png",
+  "view": "qml/Main.qml",
+  "dependencies": [],
+  "codegen": {
+    "rep": "src/zonescan_lite.rep"
+  },
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": [
+        "qt6.qtdeclarative",
+        "zstd",
+        "krb5",
+        "abseil-cpp"
+      ]
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  }
+}

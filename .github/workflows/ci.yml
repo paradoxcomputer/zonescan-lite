@@ -1,0 +1,69 @@
+# Build + test gate on every push and pull request. Until this existed the only workflow was
+# the macOS release, triggered by a tag, so nothing was ever built or tested before merge -
+# and `nix flake check` (which runs the Qt-MCP integration suite) was invoked by nothing.
+name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build the module
+        run: nix build --print-build-logs
+
+      - name: Integration tests (nix flake check)
+        run: nix flake check --print-build-logs
+
+      - name: Version is single-sourced from metadata.json
+        # CMake defines ZONESCAN_LITE_VERSION from metadata.json, so the manifest and the
+        # User-Agent cannot drift. Assert the bundle agrees with the source of truth.
+        run: |
+          nix build .#lgx -o result-lgx --print-build-logs
+          want=$(python3 -c "import json;print(json.load(open('metadata.json'))['version'])")
+          got=$(tar xzOf result-lgx/*.lgx manifest.json | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")
+          echo "metadata.json=$want  bundle manifest=$got"
+          test "$want" = "$got"
+
+      - name: Manifest carries an author
+        # The shipped manifest used to go out with "author": "".
+        run: |
+          author=$(tar xzOf result-lgx/*.lgx manifest.json | python3 -c "import json,sys;print(json.load(sys.stdin).get('author',''))")
+          echo "author=$author"
+          test -n "$author"
+
+  # No live job: reaching the detail routes needs a binary that launches the app with the QML
+  # inspector (logos-standalone-app, or Basecamp for sitometres), and neither is available to
+  # this workflow. tests-live/ui-tests-live.mjs and sitometres.yaml are local verification —
+  # see the README. A job that always failed would be worse than no job.
+
+  qml-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: qmllint
+        # Syntax + structure only. Type resolution needs the Basecamp host's QML modules,
+        # which aren't present here, so import warnings are expected and not fatal.
+        run: |
+          nix shell nixpkgs#qt6.qtdeclarative -c bash -euo pipefail -c '
+            qmldir=$(dirname $(dirname $(dirname $(readlink -f $(command -v qmllint)))))/lib/qt-6/qml
+            fail=0
+            for f in src/qml/Main.qml src/qml/pages/*.qml src/qml/components/*.qml; do
+              out=$(qmllint -I "$qmldir" -I src/qml "$f" 2>&1 || true)
+              if echo "$out" | grep -qE "\[syntax\]"; then
+                echo "::error file=$f::qmllint syntax error"; echo "$out" | grep -E "\[syntax\]"; fail=1
+              fi
+            done
+            exit $fail
+          '

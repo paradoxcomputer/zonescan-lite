@@ -1,0 +1,100 @@
+#include <QVariantList>
+#include <QVariantMap>
+
+// QtRO view contract for the ZoneScan explorer. The QML view binds these; the
+// *Plugin / *Interface glue is generated (interface: universal). The backend
+// converts the JSON strings returned by its HTTP calls into QVariantMap/QVariantList
+// before they cross this boundary.
+//
+// Call results that can FAIL are returned as a map carrying an explicit outcome:
+//   { ok: bool, error: "...", status: <http code|0>, ... payload ... }
+// `ok` is the only correct thing to branch on. A bare {} or [] used to mean both
+// "the server answered with nothing" and "the request never landed", which made a
+// timeout render as an empty chain; see getTxsQuery / decodeBlocks below.
+class ZonescanLite
+{
+    // Zone/L1 state summary from getState() (auto-synced). Home/zone pages read
+    // fields out of this map (tx_total, l1.*, sequencers[]).
+    PROP(QVariantMap state READONLY)
+    // Recent-tx feed from getTxs(), newest first. Home list model / live prepend.
+    PROP(QVariantList txs READONLY)
+    // "Connecting" / "Connected" / "Error" — drives the health dot and the stale banner.
+    PROP(QString connectionStatus READONLY)
+    // Unix seconds of the last poll that actually succeeded (0 = never). The view
+    // shows how old the rendered snapshot is once connectionStatus goes to "Error".
+    PROP(qint64 lastOkUnix READONLY)
+    // program-id → fingerprint guess { name, confidence, generic?, token? }.
+    PROP(QVariantMap guesses READONLY)
+    // program-id → verified human name (from the sequencer program registry).
+    PROP(QVariantMap programs READONLY)
+    // program-id → registered deployer instruction schema (ABI) for typed decode.
+    PROP(QVariantMap schemas READONLY)
+    // The zonescan origin this build actually talks to. The view builds external links
+    // (the guest-ELF download) from THIS, so repointing the module repoints those links too.
+    // Changed at runtime through setNodeUrl(); resolution order is
+    //   saved setting  >  $ZONESCAN_BASE_URL  >  https://zonescan.paradox.computer
+    PROP(QString baseUrl READONLY)
+    // Where the current baseUrl came from: "saved" | "env" | "default". The settings panel
+    // says so, because "why is it not the URL I exported?" is otherwise unanswerable.
+    PROP(QString nodeSource READONLY)
+    // Module version, single-sourced from metadata.json at configure time. Shown in
+    // the UI so a bug report can quote it.
+    PROP(QString version READONLY)
+
+    // Re-pull state + txs immediately and re-baseline the poller.
+    SLOT(void refresh())
+
+    // Probe a candidate node WITHOUT changing anything. Returns
+    //   { ok, url, node, zones, txTotal }  |  { ok:false, error }
+    // "reachable" is not enough to accept a URL: anything can answer 200. A zonescan node is
+    // identified by /api/state returning a JSON object carrying a `sequencers` array and an
+    // `l1` object, which is what this checks.
+    SLOT(QVariantMap checkNode(QString url))
+    // Probe a candidate node and, only if it passes, persist it and repoint the poller at it.
+    // An empty url clears the saved setting and falls back to $ZONESCAN_BASE_URL / the default.
+    // NOT named setBaseUrl: repc generates that for the `baseUrl` PROP.
+    SLOT(QVariantMap setNodeUrl(QString url))
+
+    // Detail / feed lookups. Each returns a map with `ok`; on failure `error` carries
+    // the reason and `status` the HTTP code (404 = genuinely absent, everything else
+    // = the request failed and is worth retrying).
+    SLOT(QVariantMap getTx(QString hash))
+    // /api/tx/<hash>?channel=<id> - the zone-scoped lookup. A hash is not unique across
+    // zones (identical genesis transactions), so a page that knows its zone must say so or
+    // it can render another zone's copy of the same hash.
+    SLOT(QVariantMap getTxOn(QString hash, QString channel))
+    // POST /api/decode - decode base64 sequencer blocks from the user's own machine.
+    // Returns { ok, blocks, error, status }: an empty `blocks` with ok=true means the
+    // batch held no LEZ blocks, which is NOT the same as the decoder being unreachable.
+    SLOT(QVariantMap decodeBlocks(QString body))
+    // JSON-RPC POST to a sequencer the user named (e.g. http://127.0.0.1:3070). Unlike the
+    // browser build this needs no WebSocket: a desktop module has no same-origin policy, so
+    // plain HTTP to loopback works and the transport stays ordinary JSON-RPC.
+    SLOT(QVariantMap localRpc(QString url, QString method, QVariantList params))
+    // /api/txs?<query> — cursor-paginated / filtered feed. query is key=value&…
+    // Returns { ok, items, error, status }. `items` is the row array; a failed request
+    // must never arrive as an empty page, or the feed latches itself "done".
+    SLOT(QVariantMap getTxsQuery(QString query))
+    // /api/account/<id>?<query> — account view (balances, holdings, tx page).
+    SLOT(QVariantMap getAccountQuery(QString id, QString query))
+    // /api/token/<id>?<query> — token page (name/supply + filtered tx page).
+    SLOT(QVariantMap getTokenQuery(QString id, QString query))
+    // /api/token/<id>/holders?<query> — paginated holders ({holders,next}).
+    SLOT(QVariantMap getTokenHolders(QString id, QString query))
+    // /api/program/<id>?<query> — program detail scoped to a channel.
+    SLOT(QVariantMap getProgramQuery(QString id, QString query))
+    // /api/token_of?account=<a>&channel=<c> — the token a holding/ATA belongs to.
+    SLOT(QVariantMap getTokenOf(QString account, QString channel))
+    // /api/schemas — full registered-schema map (for a manual refresh).
+    SLOT(QVariantMap getSchemas())
+    // POST /api/schemas/submit — propose/validate a schema; body is raw JSON.
+    SLOT(QVariantMap submitSchema(QString body))
+    // /api/whatis/<value> — classify a search value (routes token vs account).
+    SLOT(QVariantMap whatIs(QString value))
+    // /api/elf/<hash> — deployed guest ELF metadata.
+    SLOT(QVariantMap getElf(QString hash))
+
+    // Transient failures (a poll or a call failed / returned garbage). The view shows
+    // these as a dismissable toast; they are also qCWarning'd for the maintainer.
+    SIGNAL(error(QString message))
+}

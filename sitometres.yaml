@@ -1,0 +1,217 @@
+# sitometres spec for zonescan_lite — run:  sitometres run sitometres.yaml
+#
+# Drives real clicks through Basecamp's QML inspector against the built .lgx, which is the only
+# place several of these behaviours can be checked at all. Assertions prefer `state:` (a QML
+# expression in the app's own root) over rendered text: transaction hashes and zone ids change
+# every run, and text alone cannot tell a route apart from a cached page that still holds its
+# labels. The router publishes navType / navChannel / navId / pageError precisely so this is
+# assertable from outside QML.
+#
+# Step order is load-bearing: anything that leaves state behind (typed text, an open popup, a
+# deliberately failed call) comes after the steps that would trip over it.
+
+app: "zonescan_lite"
+timeout: 45s
+
+steps:
+  - name: the app opens with no QML errors
+    open: "ZoneScan Lite"
+    expect:
+      # pageError is set by the router when a page fails to compile. TxPage shadowed
+      # QQuickItem's FINAL `z` and never loaded in any build; the old Loader showed an empty
+      # rectangle instead of saying so.
+      state: "root.pageError === '' && root.navType === 'home'"
+      text: ["v0.3.0", "Latest Transactions", "Zones"]
+
+  - name: the zones list shows settling state
+    # `settling` is three-state (true / false / null) and was never rendered by the port at
+    # all. contains-match so either "settling" or "not settling" satisfies it — which of the
+    # two shows depends on what the chain is doing.
+    expect:
+      text:
+        - { text: "settling", match: contains }
+        - { text: "CHANNEL ID", match: contains }
+
+  - name: named channels render their names
+    # Curated aliases from theme.js's CHAN_ALIAS. The short hex stays beside the name — an
+    # alias names a channel, it does not replace its identity.
+    expect:
+      text:
+        - { text: "dev · shared default channel", match: contains }
+        - { text: "Paradox Computer", match: contains }
+
+  - name: a transaction row opens the transaction page
+    # Positional, because the hash in the label changes every run. This is the step that would
+    # have caught the FINAL-property bug: before the fix the route changed but the page failed
+    # to construct, so pageError was set and no field rendered.
+    click: { type: "TxFeedRow", nth: 0 }
+    expect:
+      state: "root.navType === 'tx' && root.pageError === '' && root.canBack"
+      text: ["Txn Hash", "Visibility", "Transaction"]
+
+  - name: back returns home and leaves a forward entry
+    click: "←"
+    expect:
+      state: "root.navType === 'home' && root.canForward && root.pageError === ''"
+
+  - name: forward returns to the transaction
+    # Forward navigation had no control at all: entries above the history cursor were
+    # unreachable.
+    click: "→"
+    expect:
+      state: "root.navType === 'tx' && !root.canForward && root.pageError === ''"
+
+  - name: back to home
+    click: "<b>zone</b>scan"
+    expect:
+      state: "root.navType === 'home'"
+
+  - name: a zone row opens the zone page
+    # Positional again: the channel_short in the label is not unique — the same string is the
+    # ZONE cell of every feed row.
+    click: { type: "ZoneRow", nth: 0 }
+    expect:
+      state: "root.navType === 'zone' && root.pageError === '' && root.navChannel !== ''"
+      text: ["Channel id", "Chain check", "Settling"]
+
+  - name: let the zone feed load
+    # The zone page fetches its own page of transactions after navigating, and a click issued
+    # before those rows exist resolves to nothing ("no element matches type ~ TxFeedRow").
+    # This is a settle for a real network fetch, not a correctness boundary: if the step below
+    # still fails, the zone feed was slow, not broken. There is no root-level "page is loading"
+    # signal to waitFor on, and text-based waits are unusable here because the router keeps
+    # cached pages alive and this view reports their text regardless of visibility.
+    sleep: 10s
+    expect:
+
+  - name: a transaction row on a zone page opens that transaction
+    # The zone page's feed uses the same TxTable as home; this is the path a crawl reports as
+    # "no effect", because moving between two transaction pages surfaces no NEW label.
+    click: { type: "TxFeedRow", nth: 0 }
+    expect:
+      state: "root.navType === 'tx' && root.pageError === ''"
+      text: ["Txn Hash"]
+
+  - name: back to home again
+    click: "<b>zone</b>scan"
+    expect:
+      state: "root.navType === 'home'"
+
+  # ── empty search BEFORE anything types into the field ──────────────────────
+  - name: search reports empty input
+    # Clicking Search with an empty field used to return silently, which is indistinguishable
+    # from a broken button — a recorded crawl logged exactly that as "nothing".
+    click: "Search"
+    expect:
+      state: "root.searchNote !== ''"
+      text:
+        - { text: "Enter a transaction hash, account, token, channel id or zone name.", match: contains }
+
+  - name: a named channel is findable by the name the UI shows
+    type:
+      into: { type: "TextField", nth: 0 }
+      text: "Paradox Computer"
+    expect:
+
+  - name: searching that name opens its zone
+    click: "Search"
+    expect:
+      state: >-
+        root.navType === 'zone' &&
+        root.navChannel === '7777777777777777777777777777777777777777777777777777777777777777'
+
+  - name: back to home
+    click: "<b>zone</b>scan"
+    expect:
+      state: "root.navType === 'home'"
+
+  - name: refresh is reachable from the UI
+    # refresh() was implemented and documented from the start with nothing able to call it.
+    click: "⟳"
+    expect:
+      state: "root.noticeText !== ''"
+
+  - name: the type filter dropdown opens
+    # Asserted through the app not breaking rather than the popup's contents: the popup's
+    # CheckBox delegates are instantiated eagerly, so their labels exist whether or not it is
+    # open, and the popup renders into an overlay this view does not report as visible text.
+    click: "All types"
+    expect:
+      state: "root.pageError === ''"
+
+  - name: dismiss the dropdown
+    # An open Popup overlays the sidebar and makes everything under it unclickable, so the
+    # local-sequencer steps below cannot reach their button until it is closed. Clicking
+    # outside it (the brand) closes it via the default closePolicy.
+    click: "<b>zone</b>scan"
+    expect:
+      state: "root.navType === 'home'"
+
+  - name: the local sequencer panel opens
+    click: "Add your local sequencer"
+    expect:
+      text:
+        - { text: "SEQUENCER ADDRESS", match: contains }
+        - { text: "Only the encoded blocks are sent to the zonescan server", match: contains }
+
+  # Last on purpose: this deliberately fails a JSON-RPC call to 127.0.0.1:3070, and the failure
+  # lands in the NEXT step's window, where it cannot be attributed and reads as an unexplained
+  # failed call. Nothing follows it.
+  - name: connecting to an absent sequencer reports the failure
+    click: "Connect"
+    expect:
+      text:
+        - { text: "could not reach a sequencer at", match: contains }
+
+
+  # ── settings: choosing the zonescan node ───────────────────────────────────
+  # Last, because every probe below deliberately fails and a failed call bleeds into the next
+  # step's window. `calls_succeed: false` on these: the failure IS the thing being asserted,
+  # and it is asserted through the message and the unchanged baseUrl instead.
+  - name: the settings panel opens on the current node
+    click: "⚙"
+    expect:
+      calls_succeed: false
+      state: "root.settingsOpen === true && root.backend.baseUrl === 'https://zonescan.paradox.computer'"
+      text:
+        - { text: "ZONESCAN NODE", match: contains }
+        - { text: "it is checked before it is applied", match: contains }
+
+  - name: an unreachable host is rejected and changes nothing
+    type:
+      into: { type: "TextInput", nth: 0 }
+      text: "http://127.0.0.1:9"
+  - name: rejecting an unreachable host leaves the node alone
+    click: "Use this node"
+    expect:
+      calls_succeed: false
+      # nothing changed: still the default, panel still open so the user can correct it
+      state: "root.backend.baseUrl === 'https://zonescan.paradox.computer' && root.settingsOpen === true"
+      text:
+        - { text: "Could not reach", match: contains }
+
+  - name: a host that answers but is not the API is rejected too
+    # Pasting a page URL instead of the API origin is the realistic mistake: this one answers
+    # HTTP 200 — with the SPA's HTML, not JSON. "Reachable" is not "is a zonescan node", which
+    # is the whole reason the check looks at the shape of /api/state rather than just the code.
+    type:
+      into: { type: "TextInput", nth: 0 }
+      text: "https://zonescan.paradox.computer/x"
+  - name: rejecting a non-API host leaves the node alone
+    click: "Use this node"
+    expect:
+      calls_succeed: false
+      state: "root.backend.baseUrl === 'https://zonescan.paradox.computer' && root.settingsOpen === true"
+      text:
+        - { text: "answered, but not with JSON", match: contains }
+
+  - name: reset returns to the default node and closes the panel
+    click: "Reset to default"
+    expect:
+      calls_succeed: false
+      state: "root.backend.baseUrl === 'https://zonescan.paradox.computer' && root.settingsOpen === false"
+
+# Not asserted here: ticking a type inside the dropdown. Its CheckBox delegates live in a Popup
+# that this harness reports as neither visible text nor a clickable element. The control itself
+# is fine — inspected directly through the QML inspector, clicking "All types" leaves
+# Popup.opened === true.

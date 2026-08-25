@@ -1,0 +1,103 @@
+# Build every platform variant on a v* tag, merge them into ONE .lgx, and publish it.
+#
+# A Basecamp package is a single .lgx carrying every variant; Basecamp picks the one for the
+# machine it is installed on. Linux builds on ubuntu; macOS can only be built on Apple
+# hardware, so the variants are produced by separate jobs and merged at the end.
+name: release
+on:
+  push: { tags: ["v*"] }
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, variant: linux-amd64 }
+          - { runner: macos-14,      variant: darwin-arm64 }
+          # No darwin-amd64: GitHub retired the Intel macOS image, so a `macos-13` job is
+          # never assigned a runner and queues forever (observed: 178 min, then 24 min, both
+          # with runner=NONE) rather than failing. The published Paradox packages ship
+          # darwin-arm64 + linux-amd64 only, so this matches them. If Intel coverage is
+          # wanted later, try the `macos-15-intel` label or a self-hosted runner.
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Build the portable .lgx
+        run: |
+          nix build .#lgx-portable -o result-portable --print-build-logs
+          mkdir -p out && cp result-portable/*.lgx "out/${{ matrix.variant }}.lgx"
+          # Fail loudly if a runner produced a variant we did not ask for: merging then
+          # yields a package that silently lacks a platform.
+          tar tzf "out/${{ matrix.variant }}.lgx" | grep -q "^variants/${{ matrix.variant }}/" \
+            || { echo "::error::expected variants/${{ matrix.variant }}/ in the bundle"; \
+                 tar tzf "out/${{ matrix.variant }}.lgx" | grep '^variants/'; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with: { name: "lgx-${{ matrix.variant }}", path: out/*.lgx }
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: actions/download-artifact@v4
+        with: { path: parts, pattern: "lgx-*", merge-multiple: true }
+
+      - name: Merge the variants into one package
+        run: |
+          set -euo pipefail
+          # Resolve THE lgx CLI this module is built with, by asking the flake rather than
+          # guessing from the store: every path in /nix/store shares one mtime, so `ls -t`
+          # sorts by hash, not recency, and can pick a different build of the same version.
+          drv=$(nix path-info --derivation .#lgx)
+          lgxdrv=$(nix-store -q --references "$drv" | grep -E '/nix/store/.*-lgx-[0-9][^/]*\.drv$')
+          test "$(printf '%s\n' "$lgxdrv" | wc -l)" -eq 1   # exactly one, never "pick the first"
+          LGX="$(nix-store -r "$lgxdrv")/bin/lgx"
+
+          version="${GITHUB_REF_NAME#v}"
+          "$LGX" merge parts/*.lgx -o "zonescan_lite-${version}.lgx" -y
+
+          # `lgx merge` writes a fresh manifest and drops display_name — every package
+          # published to date carries "display_name": null for this reason, which is what
+          # Basecamp's package list labels the app from. Put it back from metadata.json.
+          # The hash tree covers the variants, not manifest.json, so this does not invalidate
+          # it: `lgx verify` below is the check on that.
+          python3 - "zonescan_lite-${version}.lgx" <<'PY'
+          import gzip, io, json, sys, tarfile
+          path = sys.argv[1]
+          want = json.load(open("metadata.json")).get("display_name")
+          raw = gzip.open(path, "rb").read()
+          tf = tarfile.open(fileobj=io.BytesIO(raw))
+          members = [(m, tf.extractfile(m).read() if m.isfile() else None) for m in tf.getmembers()]
+          out = []
+          for m, data in members:
+              if m.name == "manifest.json":
+                  d = json.loads(data)
+                  if not d.get("display_name") and want:
+                      d["display_name"] = want
+                      data = json.dumps(d, indent=2).encode()
+                      m.size = len(data)
+              out.append((m, data))
+          buf = io.BytesIO()
+          with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.GNU_FORMAT) as t:
+              for m, data in out:
+                  t.addfile(m, io.BytesIO(data)) if data is not None else t.addfile(m)
+          open(path, "wb").write(buf.getvalue())
+          print("display_name:", want)
+          PY
+
+          "$LGX" verify "zonescan_lite-${version}.lgx"
+          python3 -c "import json,tarfile;m=json.load(tarfile.open('zonescan_lite-${version}.lgx').extractfile('manifest.json'));assert m.get('display_name'),'display_name missing';print('manifest display_name:',m['display_name'])"
+          echo "variants in the published package:"
+          tar tzf "zonescan_lite-${version}.lgx" | grep -E '^variants/[^/]+/$'
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: zonescan_lite-*.lgx
+          generate_release_notes: true
