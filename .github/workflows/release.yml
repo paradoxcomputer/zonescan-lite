@@ -92,10 +92,54 @@ jobs:
           print("display_name:", want)
           PY
 
+          # Basecamp resolves variants by name, and a source/Nix build of Basecamp accepts
+          # ONLY the "-dev" spellings: package_manager_lib.cpp's platformVariantsToTry()
+          # REPLACES the candidate list with "<platform>-dev" unless LGPM_PORTABLE_BUILD is
+          # defined. So a package carrying just linux-amd64 + darwin-arm64 installs on the
+          # AppImage/portable builds and fails on every source build with
+          #   "Package does not contain variant for platform: linux-x86_64-dev".
+          #
+          # The payload is the same either way: publish the PORTABLE payload under both
+          # names. The real `.#lgx` dev bundle cannot be published at all - it is the raw Nix
+          # output, and its RUNPATH points at the builder's /nix/store (qtbase, openssl,
+          # boost, glibc), which no other machine has.
+          python3 - "zonescan_lite-${version}.lgx" > alias-plan.txt <<'PY'
+          import json, sys, tarfile
+          m = json.load(tarfile.open(sys.argv[1]).extractfile("manifest.json"))
+          view = m.get("view", "")
+          for v in sorted(k for k in m.get("hashes", {}) if k.startswith("variants/")):
+              name = v.split("/", 1)[1]
+              if name.endswith("-dev"):
+                  continue
+              print(name, m.get("main", {}).get(name, ""), view)
+          PY
+
+          "$LGX" extract "zonescan_lite-${version}.lgx" -o ex >/dev/null
+          while read -r v main view; do
+            echo "aliasing $v -> ${v}-dev"
+            args=(--variant "${v}-dev" --files "ex/$v" -y)
+            # `cmd && arr+=(...)` is the whole command here, so an empty field would make it
+            # return 1 and `set -e` would kill the job. Use if/fi.
+            if [ -n "$main" ]; then args+=(--main "$main"); fi
+            if [ -n "$view" ]; then args+=(--view "$view"); fi
+            "$LGX" add "zonescan_lite-${version}.lgx" "${args[@]}"
+          done < alias-plan.txt
+          rm -rf ex alias-plan.txt
+
           "$LGX" verify "zonescan_lite-${version}.lgx"
           python3 -c "import json,tarfile;m=json.load(tarfile.open('zonescan_lite-${version}.lgx').extractfile('manifest.json'));assert m.get('display_name'),'display_name missing';print('manifest display_name:',m['display_name'])"
           echo "variants in the published package:"
           tar tzf "zonescan_lite-${version}.lgx" | grep -E '^variants/[^/]+/$'
+          python3 - "zonescan_lite-${version}.lgx" <<'PY'
+          import json, sys, tarfile
+          m = json.load(tarfile.open(sys.argv[1]).extractfile("manifest.json"))
+          have = {k.split("/", 1)[1] for k in m.get("hashes", {}) if k.startswith("variants/")}
+          plain = {v for v in have if not v.endswith("-dev")}
+          missing = {v for v in plain if v + "-dev" not in have}
+          assert plain, "no platform variants at all"
+          assert not missing, f"variants without a -dev twin (source builds of Basecamp cannot install these): {sorted(missing)}"
+          print("variant pairs OK:", sorted(have))
+          PY
 
       - uses: softprops/action-gh-release@v2
         with:

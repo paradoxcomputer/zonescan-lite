@@ -3,6 +3,24 @@
 All notable changes to ZoneScan Lite. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `metadata.json`.
 
+## [0.3.1] — 2026-08-25
+
+### Fixed
+
+- **The published package could not be installed by any source build of Basecamp.** Releases
+  carried only the portable variant names (`linux-amd64`, `darwin-arm64`), but Basecamp's
+  `platformVariantsToTry()` *replaces* its candidate list with the `-dev` spellings unless it
+  was compiled with `LGPM_PORTABLE_BUILD` — so a Nix/source Basecamp looks for
+  `linux-x86_64-dev` / `linux-amd64-dev`, finds neither, and reports
+  *"Package does not contain variant for platform: linux-x86_64-dev"*. The release workflow now
+  publishes the portable payload under both spellings, and asserts every variant has a `-dev`
+  twin before publishing. The genuine `.#lgx` dev bundle cannot be shipped in its place: it is
+  the raw Nix output and its RUNPATH points at the builder's `/nix/store`.
+
+  This was invisible to the test suite because `sitometres` stages the `-dev` variant, which
+  only the local `.#lgx` build produces — so every test ran against a bundle shaped differently
+  from the one users download.
+
 ## [0.3.0] — 2026-08-25
 
 A pass over everything an audit of the module turned up. The happy path was already
