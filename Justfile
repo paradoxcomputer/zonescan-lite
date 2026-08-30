@@ -45,13 +45,48 @@ lint:
     #!/usr/bin/env bash
     set -euo pipefail
     nix shell nixpkgs#qt6.qtdeclarative -c bash -c '
-      qmldir=$(dirname $(dirname $(dirname $(readlink -f $(command -v qmllint)))))/lib/qt-6/qml
+      # dirname TWICE. qmllint lives at <qtdeclarative>/bin/qmllint and the QML modules at
+      # <qtdeclarative>/lib/qt-6/qml; a third dirname yielded /nix/store, an import path that
+      # resolves nothing. QtQuick was therefore unimportable and every rule that needs a
+      # resolved type silently reported nothing - the gate only ever caught [syntax].
+      qmldir=$(dirname $(dirname $(readlink -f $(command -v qmllint))))/lib/qt-6/qml
       fail=0
-      for f in src/qml/Main.qml src/qml/pages/*.qml src/qml/components/*.qml; do
+      for f in src/qml/Main.qml src/qml/pages/*.qml src/qml/components/*.qml src/qml/theme/*.qml; do
         out=$(qmllint -I "$qmldir" -I src/qml "$f" 2>&1 || true)
         if echo "$out" | grep -qE "\[syntax\]"; then echo "$f:"; echo "$out" | grep -E "\[syntax\]"; fail=1; fi
       done
-      [ $fail -eq 0 ] && echo "qmllint: no syntax errors"
+      # src/qml/theme/ is held to a stricter gate than the rest of the tree, because the
+      # singleton has a failure mode nothing else here has: a Settings or Loader written as a
+      # BARE CHILD of QtObject does not warn at runtime, it fails the document at LOAD time and
+      # takes all 24 importers down with it. qmllint reports exactly that as
+      #   Cannot assign to non-existent default property [missing-property]
+      # so [missing-property] and [import] are errors in this directory. Two allowlisted
+      # patterns, both cosmetic and both verified correct at runtime:
+      #   QQmlSettings  - qmllint cannot see properties declared inside a Settings block
+      #   Logos.Theme   - HostThemeProbe is MEANT to fail that import outside Basecamp; the
+      #                   Loader in ZTheme.qml is what contains it
+      for f in src/qml/theme/*.qml; do
+        out=$(qmllint -I "$qmldir" -I src/qml "$f" 2>&1 || true)
+        strict=$(echo "$out" | grep -E "\[(missing-property|import)\]" \
+                             | grep -v "QQmlSettings" | grep -v "Logos.Theme" || true)
+        if [ -n "$strict" ]; then echo "$f:"; echo "$strict"; fail=1; fi
+      done
+      # QT VERSION SKEW - the reason this check is a grep and not a lint rule.
+      # This recipe lints with whatever qmllint nix shell nixpkgs#qt6.qtdeclarative hands it
+      # (6.11.1 at the time of writing). Basecamp runs Qt 6.9.2. The word public used as a BARE
+      # object-literal key is accepted by 6.11 and is a [syntax] error in 6.9 - Expected token
+      # rbrace - which made the whole ZTheme singleton fail to compile inside the host
+      # (Type ZTheme unavailable, taking all 24 importers down with it) while every gate here
+      # stayed green. Only launching the real app found it. public and import are the two words
+      # the two parsers disagree about; quoted, both are happy. theme.js is exempt on purpose:
+      # a .js file goes through a different, permissive parser and has always used bare public.
+      res=$(grep -rnE "(^|[({,[:space:]])(public|import)[[:space:]]*:" src/qml --include="*.qml" || true)
+      if [ -n "$res" ]; then
+        echo "$res"
+        echo "^ reserved word as a BARE object-literal key. Quote it: Qt 6.9.2 (what Basecamp runs) rejects it."
+        fail=1
+      fi
+      [ $fail -eq 0 ] && echo "qmllint: clean (no [syntax]; theme/ also free of [missing-property]/[import]; no bare reserved-word keys)"
       exit $fail'
 
 # Everything CI runs.

@@ -3,11 +3,50 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "components"
 import "pages"
+import "theme"
 import "theme.js" as ZT
 
 Rectangle {
     id: root
-    color: ZT.pal.bg
+    color: ZTheme.bg
+
+    // ── stock QtQuick.Controls ───────────────────────────────────────────────
+    // Everything in this tree that we draw ourselves flips through ZTheme bindings. The ~26
+    // STOCK controls (8 ScrollBars, 2 ComboBoxes, 2 TextFields, a TextArea, 2 BusyIndicators,
+    // the FilterBar's Button and its 11 CheckBoxes) do not: they paint from `palette.*`, which
+    // owes us nothing. One block here covers every one of them that is an ITEM in this tree —
+    // pages are created into `pageHost`, so they inherit it too.
+    //
+    // The light column is the Basic style's OWN default palette, measured at runtime and copied
+    // back verbatim, so declaring it is a no-op in light: with this block applied, every
+    // control's resolved palette is byte-identical to having no block at all. Values live in
+    // ZTheme (ctl*) beside the rest of the theme, not here.
+    //
+    // Two things this block does NOT reach, both verified rather than assumed:
+    //   * a free-standing Popup — FilterBar's type menu carries its own block (see there);
+    //   * an attached ToolTip — covered by the three Bindings at the bottom of this file.
+    //
+    // And it only works at all while the host installs the Basic style
+    // (QQuickStyle::setStyle("Basic"), Basecamp MainContainer.cpp:73). Basic and Fusion honour
+    // `palette`; Material and Universal largely ignore it. One line changed over there silently
+    // un-themes all of this, and nothing in this module's CI can see it happen.
+    palette.window:          ZTheme.ctlWindow
+    palette.windowText:      ZTheme.ctlWindowText
+    palette.base:            ZTheme.ctlBase
+    palette.text:            ZTheme.ctlText
+    palette.button:          ZTheme.ctlButton
+    palette.buttonText:      ZTheme.ctlButtonText
+    palette.mid:             ZTheme.ctlMid
+    palette.midlight:        ZTheme.ctlMidlight
+    palette.light:           ZTheme.ctlLight
+    palette.dark:            ZTheme.ctlDark
+    palette.shadow:          ZTheme.ctlShadow
+    palette.highlight:       ZTheme.ctlHighlight
+    palette.highlightedText: ZTheme.ctlHighlightedText
+    palette.placeholderText: ZTheme.ctlPlaceholderText
+    palette.brightText:      ZTheme.ctlBrightText
+    palette.toolTipBase:     ZTheme.ctlToolTipBase
+    palette.toolTipText:     ZTheme.ctlToolTipText
 
     readonly property var backend: logos.module("zonescan_lite")
     property bool ready: false
@@ -363,27 +402,34 @@ Rectangle {
         id: topbar
         anchors { top: parent.top; left: parent.left; right: parent.right }
         height: 68; z: 10
-        gradient: Gradient { GradientStop { position: 0; color: "#f1f1f3" } GradientStop { position: 1; color: "#d9d9de" } }
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#c4c4cc" }
+        gradient: Gradient { GradientStop { position: 0; color: ZTheme.topbarA } GradientStop { position: 1; color: ZTheme.topbarB } }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.topbarLine }
         RowLayout { anchors { fill: parent; leftMargin: 18; rightMargin: 18 } spacing: 18
             Row { spacing: 11
-                Image { source: "icons/logo.png"; width: 40; height: 40; anchors.verticalCenter: parent.verticalCenter; fillMode: Image.PreserveAspectFit
+                // Two rasters, not one recoloured raster: every opaque pixel of logo.png is
+                // near-black (avg luma 15.0 over 1307 opaque px), so it disappears on a dark
+                // topbar - and QML's Image has no colour filter, with Qt5Compat.GraphicalEffects
+                // absent from the runtime closure. logo-light.png is the same file with the
+                // alpha channel byte-identical and the RGB replaced by the dark `fg`, #ffffff.
+                // `_mode`, not `userMode`: _mode changes AFTER theme.js has been pushed.
+                Image { source: ZTheme._mode === "dark" ? "icons/logo-light.png" : "icons/logo.png"
+                    width: 40; height: 40; anchors.verticalCenter: parent.verticalCenter; fillMode: Image.PreserveAspectFit
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.navHome() } }
                 Text { anchors.verticalCenter: parent.verticalCenter; textFormat: Text.StyledText
-                    text: "<b>zone</b>scan"; color: ZT.pal.navy; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 0.2
+                    text: "<b>zone</b>scan"; color: ZTheme.navy; font.pixelSize: 19; font.weight: Font.Bold; font.letterSpacing: 0.2
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.navHome() } }
                 // Module version — so a bug report can quote the build it came from.
                 Text { anchors.verticalCenter: parent.verticalCenter; visible: !!(root.backend && root.backend.version)
-                    text: root.backend ? ("v" + root.backend.version) : ""; color: ZT.pal.soft; font.pixelSize: 11
+                    text: root.backend ? ("v" + root.backend.version) : ""; color: ZTheme.soft; font.pixelSize: 11
                     font.family: "ui-monospace, Menlo, Consolas, monospace" }
             }
             Item { Layout.fillWidth: true }
             // settings — pick which zonescan node the module reads from
             Rectangle {
                 implicitWidth: 30; implicitHeight: 28; radius: 8; border.width: 1
-                border.color: root.settingsOpen ? ZT.pal.fg : ZT.pal.line2
-                gradient: Gradient { GradientStop { position: 0; color: "#ffffff" } GradientStop { position: 1; color: "#f1f1f4" } }
-                Text { anchors.centerIn: parent; text: "⚙"; color: ZT.pal.muted; font.pixelSize: 15 }
+                border.color: root.settingsOpen ? ZTheme.fg : ZTheme.line2
+                gradient: Gradient { GradientStop { position: 0; color: ZTheme.ctrlA } GradientStop { position: 1; color: ZTheme.ctrlB } }
+                Text { anchors.centerIn: parent; text: "⚙"; color: ZTheme.muted; font.pixelSize: 15 }
                 MouseArea { anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: root.settingsOpen ? root.settingsOpen = false : root.openSettings()
                     ToolTip.visible: containsMouse; ToolTip.text: "Settings (Ctrl+,)" }
@@ -391,23 +437,23 @@ Rectangle {
             // manual refresh — refresh() was implemented and documented from the start with
             // nothing in the view able to call it.
             Rectangle {
-                implicitWidth: 30; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZT.pal.line2
-                gradient: Gradient { GradientStop { position: 0; color: "#ffffff" } GradientStop { position: 1; color: "#f1f1f4" } }
-                Text { anchors.centerIn: parent; text: "⟳"; color: ZT.pal.muted; font.pixelSize: 15 }
+                implicitWidth: 30; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZTheme.line2
+                gradient: Gradient { GradientStop { position: 0; color: ZTheme.ctrlA } GradientStop { position: 1; color: ZTheme.ctrlB } }
+                Text { anchors.centerIn: parent; text: "⟳"; color: ZTheme.muted; font.pixelSize: 15 }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.doRefresh()
                     ToolTip.visible: containsMouse; ToolTip.text: "Refresh (Ctrl+R)"; hoverEnabled: true }
             }
             // sync pill — reports zonescan reachability FIRST, then the L1's own health.
             Rectangle {
-                implicitWidth: syncRow.implicitWidth + 22; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZT.pal.line2
-                gradient: Gradient { GradientStop { position: 0; color: "#ffffff" } GradientStop { position: 1; color: "#f1f1f4" } }
+                implicitWidth: syncRow.implicitWidth + 22; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZTheme.line2
+                gradient: Gradient { GradientStop { position: 0; color: ZTheme.ctrlA } GradientStop { position: 1; color: ZTheme.ctrlB } }
                 Row { id: syncRow; anchors.centerIn: parent; spacing: 7
                     Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter
-                        color: { if (root.stale) return ZT.pal.red;
-                                 if (!root.l1 || !root.l1.reachable) return ZT.pal.red;
-                                 if ((root.l1.mode && root.l1.mode !== "online") || root.l1.advancing === false) return ZT.pal.silver;
-                                 return ZT.pal.green; } }
-                    Text { anchors.verticalCenter: parent.verticalCenter; color: ZT.pal.muted; font.pixelSize: 12
+                        color: { if (root.stale) return ZTheme.red;
+                                 if (!root.l1 || !root.l1.reachable) return ZTheme.red;
+                                 if ((root.l1.mode && root.l1.mode !== "online") || root.l1.advancing === false) return ZTheme.silver;
+                                 return ZTheme.green; } }
+                    Text { anchors.verticalCenter: parent.verticalCenter; color: ZTheme.muted; font.pixelSize: 12
                         text: { if (root.stale) return "zonescan unreachable";
                                 if (root.conn === "Connecting") return "connecting…";
                                 if (!root.l1) return "connecting…";
@@ -420,13 +466,13 @@ Rectangle {
             // L1 REST version pill (mono navy)
             Rectangle {
                 visible: !!(root.l1 && root.l1.reachable && root.l1.l1_version)
-                implicitWidth: verT.implicitWidth + 22; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZT.pal.line2
-                gradient: Gradient { GradientStop { position: 0; color: "#ffffff" } GradientStop { position: 1; color: "#f1f1f4" } }
-                Text { id: verT; anchors.centerIn: parent; color: ZT.pal.navy; font.pixelSize: 12; font.weight: Font.DemiBold
+                implicitWidth: verT.implicitWidth + 22; implicitHeight: 28; radius: 8; border.width: 1; border.color: ZTheme.line2
+                gradient: Gradient { GradientStop { position: 0; color: ZTheme.ctrlA } GradientStop { position: 1; color: ZTheme.ctrlB } }
+                Text { id: verT; anchors.centerIn: parent; color: ZTheme.navy; font.pixelSize: 12; font.weight: Font.DemiBold
                     font.family: "ui-monospace, Menlo, Consolas, monospace"; text: root.l1 ? ("L1 v" + (root.l1.l1_version || "")) : "" }
             }
             Text { Layout.maximumWidth: 280; elide: Text.ElideRight; text: root.state ? (root.state.node || "-") : "-"
-                color: ZT.pal.soft; font.pixelSize: 11; font.family: "ui-monospace, Menlo, Consolas, monospace" }
+                color: ZTheme.soft; font.pixelSize: 11; font.family: "ui-monospace, Menlo, Consolas, monospace" }
         }
     }
 
@@ -436,46 +482,46 @@ Rectangle {
         anchors { top: topbar.bottom; left: parent.left; right: parent.right }
         height: heroCol.implicitHeight + 44
         // radial-ish: approximate the top-left radial with a diagonal gradient
-        gradient: Gradient { GradientStop { position: 0; color: ZT.pal.heroA } GradientStop { position: 1; color: ZT.pal.heroB } }
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#000000" }
+        gradient: Gradient { GradientStop { position: 0; color: ZTheme.heroA } GradientStop { position: 1; color: ZTheme.heroB } }
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.heroLine }
         Column {
             id: heroCol
             anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 18; rightMargin: 18; topMargin: 22 }
             spacing: 12
             RowLayout { width: parent.width; spacing: 10
-                Rectangle { visible: root.canBack; implicitWidth: 30; implicitHeight: 30; radius: 8; color: backMa.containsMouse ? "#33ffffff" : "#22ffffff"; border.width: 1; border.color: "#33ffffff"
-                    Text { anchors.centerIn: parent; text: "←"; color: "#fff"; font.pixelSize: 15 }
+                Rectangle { visible: root.canBack; implicitWidth: 30; implicitHeight: 30; radius: 8; color: backMa.containsMouse ? ZTheme.heroBtnHover : ZTheme.heroBtnBg; border.width: 1; border.color: ZTheme.heroBtnBd
+                    Text { anchors.centerIn: parent; text: "←"; color: ZTheme.heroFg; font.pixelSize: 15 }
                     MouseArea { id: backMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.navBack()
                         ToolTip.visible: containsMouse; ToolTip.text: "Back (Alt+Left)" } }
-                Rectangle { visible: root.canForward; implicitWidth: 30; implicitHeight: 30; radius: 8; color: fwdMa.containsMouse ? "#33ffffff" : "#22ffffff"; border.width: 1; border.color: "#33ffffff"
-                    Text { anchors.centerIn: parent; text: "→"; color: "#fff"; font.pixelSize: 15 }
+                Rectangle { visible: root.canForward; implicitWidth: 30; implicitHeight: 30; radius: 8; color: fwdMa.containsMouse ? ZTheme.heroBtnHover : ZTheme.heroBtnBg; border.width: 1; border.color: ZTheme.heroBtnBd
+                    Text { anchors.centerIn: parent; text: "→"; color: ZTheme.heroFg; font.pixelSize: 15 }
                     MouseArea { id: fwdMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.navForward()
                         ToolTip.visible: containsMouse; ToolTip.text: "Forward (Alt+Right)" } }
                 // h1 + sub
                 Row {
                     spacing: 8; Layout.alignment: Qt.AlignVCenter; Layout.fillWidth: true
-                    Text { text: "Logos Execution Zone Explorer"; color: "#ffffff"; font.pixelSize: 18; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter }
-                    Text { visible: parent.width > 620; text: ":: data, liveness and consistency of Logos L2"; color: "#b9b9c1"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "Logos Execution Zone Explorer"; color: ZTheme.heroFg; font.pixelSize: 18; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter }
+                    Text { visible: parent.width > 620; text: ":: data, liveness and consistency of Logos L2"; color: ZTheme.heroSub; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                 }
             }
-            Rectangle { width: Math.min(parent.width, 1204); height: 48; radius: 11; color: "#ffffff"; border.width: 1; border.color: "#1a1a1e"; clip: true
+            Rectangle { width: Math.min(parent.width, 1204); height: 48; radius: 11; color: ZTheme.searchBg; border.width: 1; border.color: ZTheme.searchBd; clip: true
                 RowLayout { anchors.fill: parent; spacing: 0
                     TextField { id: searchInput; Layout.fillWidth: true; Layout.fillHeight: true
                         enabled: !root.searching
                         placeholderText: "Search by Txn Hash / Account / Channel"; leftPadding: 16; rightPadding: 16
-                        color: ZT.pal.fg; font.pixelSize: 14; font.family: "ui-monospace, Menlo, Consolas, monospace"
-                        background: Rectangle { color: "#ffffff" }
+                        color: ZTheme.fg; font.pixelSize: 14; font.family: "ui-monospace, Menlo, Consolas, monospace"
+                        background: Rectangle { color: ZTheme.searchBg }
                         onAccepted: root.doSearch(text)
                         onTextChanged: root.searchNote = "" }
                     Rectangle { Layout.fillHeight: true; implicitWidth: 96
-                        gradient: Gradient { GradientStop { position: 0; color: root.searching ? "#6a6a70" : "#3a3a40" } GradientStop { position: 1; color: root.searching ? "#3a3a3e" : "#161618" } }
-                        Text { anchors.centerIn: parent; text: root.searching ? "…" : "Search"; color: "#fff"; font.pixelSize: 14; font.weight: Font.DemiBold }
+                        gradient: Gradient { GradientStop { position: 0; color: root.searching ? ZTheme.btnBusyA : ZTheme.actionA } GradientStop { position: 1; color: root.searching ? ZTheme.btnBusyB : ZTheme.actionB } }
+                        Text { anchors.centerIn: parent; text: root.searching ? "…" : "Search"; color: ZTheme.onDark; font.pixelSize: 14; font.weight: Font.DemiBold }
                         MouseArea { anchors.fill: parent; enabled: !root.searching; cursorShape: Qt.PointingHandCursor; onClicked: root.doSearch(searchInput.text) } }
                 }
             }
             // search feedback — an empty, in-flight or unmatched search used to look identical
             // to no search at all.
-            Text { visible: root.searchNote !== ""; text: root.searchNote; color: "#ffd9d2"; font.pixelSize: 12
+            Text { visible: root.searchNote !== ""; text: root.searchNote; color: ZTheme.heroErrFg; font.pixelSize: 12
                 width: parent.width; wrapMode: Text.WordWrap }
         }
     }
@@ -488,20 +534,20 @@ Rectangle {
         anchors { top: hero.bottom; left: parent.left; right: parent.right }
         height: root.stale ? 34 : 0
         visible: root.stale
-        color: "#fdece8"
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#f2cfc7" }
+        color: ZTheme.warnBg
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.warnLine }
         RowLayout {
             anchors { fill: parent; leftMargin: 18; rightMargin: 18 }
             spacing: 10
-            Text { color: "#8c2d1c"; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight
+            Text { color: ZTheme.warnFg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight
                 text: {
                     root.ageTick;
                     var age = root.lastOk > 0 ? ZT.fmtAge(root.lastOk) : "";
                     return "Can't reach zonescan — showing the last snapshot"
                          + (age ? " from " + age : "") + ". Figures below are not live.";
                 } }
-            Rectangle { implicitWidth: 62; implicitHeight: 22; radius: 6; color: "#ffffff"; border.width: 1; border.color: "#e0b4a8"
-                Text { anchors.centerIn: parent; text: "Retry"; color: "#8c2d1c"; font.pixelSize: 11; font.weight: Font.DemiBold }
+            Rectangle { implicitWidth: 62; implicitHeight: 22; radius: 6; color: ZTheme.warnBtnBg; border.width: 1; border.color: ZTheme.warnBd
+                Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.warnFg; font.pixelSize: 11; font.weight: Font.DemiBold }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.doRefresh() } }
         }
     }
@@ -511,19 +557,19 @@ Rectangle {
 
     // page-load failure (a QML compile error in a page)
     Rectangle {
-        anchors.fill: pageHost; visible: root.pageError !== ""; color: ZT.pal.bg
+        anchors.fill: pageHost; visible: root.pageError !== ""; color: ZTheme.bg
         Column {
             anchors.centerIn: parent; width: Math.min(parent.width - 48, 620); spacing: 10
-            Text { text: "This page failed to load"; color: ZT.pal.fg; font.pixelSize: 15; font.weight: Font.DemiBold
+            Text { text: "This page failed to load"; color: ZTheme.fg; font.pixelSize: 15; font.weight: Font.DemiBold
                 anchors.horizontalCenter: parent.horizontalCenter }
-            Text { text: root.pageError; color: ZT.pal.muted; font.pixelSize: 11; width: parent.width; wrapMode: Text.Wrap
+            Text { text: root.pageError; color: ZTheme.muted; font.pixelSize: 11; width: parent.width; wrapMode: Text.Wrap
                 font.family: "ui-monospace, Menlo, Consolas, monospace" }
             Row { spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
-                Rectangle { implicitWidth: 74; implicitHeight: 26; radius: 6; color: ZT.pal.panel; border.width: 1; border.color: ZT.pal.line2
-                    Text { anchors.centerIn: parent; text: "Go home"; color: ZT.pal.fg; font.pixelSize: 12 }
+                Rectangle { implicitWidth: 74; implicitHeight: 26; radius: 6; color: ZTheme.panel; border.width: 1; border.color: ZTheme.line2
+                    Text { anchors.centerIn: parent; text: "Go home"; color: ZTheme.fg; font.pixelSize: 12 }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.navHome() } }
-                Rectangle { implicitWidth: 74; implicitHeight: 26; radius: 6; color: ZT.pal.panel; border.width: 1; border.color: ZT.pal.line2
-                    Text { anchors.centerIn: parent; text: "Copy error"; color: ZT.pal.fg; font.pixelSize: 12 }
+                Rectangle { implicitWidth: 74; implicitHeight: 26; radius: 6; color: ZTheme.panel; border.width: 1; border.color: ZTheme.line2
+                    Text { anchors.centerIn: parent; text: "Copy error"; color: ZTheme.fg; font.pixelSize: 12 }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.copyText(root.pageError, "Error") } }
             }
         }
@@ -537,7 +583,7 @@ Rectangle {
         id: settingsScrim
         anchors.fill: parent
         visible: root.settingsOpen
-        color: "#66000000"
+        color: ZTheme.scrim
         z: 40
         MouseArea { anchors.fill: parent; onClicked: root.settingsOpen = false }
 
@@ -545,7 +591,7 @@ Rectangle {
             anchors.centerIn: parent
             width: Math.min(parent.width - 48, 560)
             height: card.implicitHeight + 36
-            radius: 12; color: ZT.pal.panel; border.width: 1; border.color: ZT.pal.line2
+            radius: 12; color: ZTheme.panel; border.width: 1; border.color: ZTheme.line2
             // swallow clicks so they do not reach the dismiss scrim underneath
             MouseArea { anchors.fill: parent }
 
@@ -555,14 +601,14 @@ Rectangle {
                           leftMargin: 18; rightMargin: 18; topMargin: 18 }
                 spacing: 10
 
-                Text { text: "Settings"; color: ZT.pal.navy; font.pixelSize: 16; font.weight: Font.DemiBold }
+                Text { text: "Settings"; color: ZTheme.navy; font.pixelSize: 16; font.weight: Font.DemiBold }
 
-                Text { text: "ZONESCAN NODE"; color: ZT.pal.soft; font.pixelSize: 11
+                Text { text: "ZONESCAN NODE"; color: ZTheme.soft; font.pixelSize: 11
                     font.weight: Font.Bold; font.letterSpacing: 0.5 }
 
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap
-                    color: ZT.pal.muted; font.pixelSize: 12; lineHeight: 1.35
+                    color: ZTheme.muted; font.pixelSize: 12; lineHeight: 1.35
                     text: "The explorer reads every zone, transaction and account from this node. "
                         + "It is checked before it is applied: if it cannot be reached, or does not answer "
                         + "like a zonescan node, nothing changes."
@@ -570,15 +616,15 @@ Rectangle {
 
                 Rectangle {
                     width: parent.width; height: 34; radius: 7
-                    color: root.nodeBusy ? ZT.pal.bg : "#ffffff"
-                    border.width: 1; border.color: root.nodeMsgError ? "#e0b4a8" : ZT.pal.line2
+                    color: root.nodeBusy ? ZTheme.bg : ZTheme.ctrlA
+                    border.width: 1; border.color: root.nodeMsgError ? ZTheme.warnBd : ZTheme.line2
                     TextInput {
                         id: nodeField
                         anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
                         verticalAlignment: TextInput.AlignVCenter
                         enabled: !root.nodeBusy
                         text: ""
-                        color: ZT.pal.fg; font.pixelSize: 12
+                        color: ZTheme.fg; font.pixelSize: 12
                         font.family: "ui-monospace, Menlo, Consolas, monospace"
                         clip: true; selectByMouse: true
                         onAccepted: root.applyNode(nodeField.text)
@@ -590,7 +636,7 @@ Rectangle {
                 // exported?" has no answer on screen
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap
-                    color: ZT.pal.soft; font.pixelSize: 11
+                    color: ZTheme.soft; font.pixelSize: 11
                     text: {
                         if (root.nodeSource === "saved") return "In use: your saved choice.";
                         if (root.nodeSource === "env")   return "In use: $ZONESCAN_BASE_URL.";
@@ -603,34 +649,67 @@ Rectangle {
                     visible: root.nodeMsg !== ""
                     width: parent.width; wrapMode: Text.WordWrap
                     text: root.nodeMsg
-                    color: root.nodeMsgError ? "#8c2d1c" : ZT.pal.muted
+                    color: root.nodeMsgError ? ZTheme.warnFg : ZTheme.muted
                     font.pixelSize: 12
                 }
+
+                // ── appearance ──
+                // Shaped like HomePage's All | rc | data segment so it reads as the same
+                // control. LIGHT is the shipped default; Auto is opt-in and follows the Basecamp
+                // shell (its design system ships only a dark theme today, so choosing Auto
+                // resolves dark inside the host and dark standalone).
+                //
+                // The SELECTED test reads ZTheme.userMode - the persisted preference - and not
+                // _mode: with Auto chosen against a dark host, _mode is "dark" and would light
+                // up the wrong segment. That read is state, never colour; the pill's own
+                // colours come from tokens, so it cannot render a half-applied palette.
+                Item { width: 1; height: 2 }
+                Text { text: "APPEARANCE"; color: ZTheme.soft; font.pixelSize: 11
+                    font.weight: Font.Bold; font.letterSpacing: 0.5 }
+                Row {
+                    spacing: 6
+                    Repeater {
+                        model: [ {t:"Auto",v:"auto"}, {t:"Light",v:"light"}, {t:"Dark",v:"dark"} ]
+                        delegate: Rectangle {
+                            id: appSeg
+                            required property var modelData
+                            readonly property bool sel: ZTheme.userMode === appSeg.modelData.v
+                            height: 26; width: appT.implicitWidth + 22; radius: 7
+                            color: appSeg.sel ? ZTheme.ctrlSel : ZTheme.ctrlA
+                            border.width: 1; border.color: appSeg.sel ? ZTheme.fg : ZTheme.line2
+                            Text { id: appT; anchors.centerIn: parent; text: appSeg.modelData.t; font.pixelSize: 12
+                                color: appSeg.sel ? ZTheme.fg : ZTheme.muted }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: ZTheme.setUserMode(appSeg.modelData.v) }
+                        }
+                    }
+                }
+                Item { width: 1; height: 2 }
 
                 Row {
                     spacing: 8
                     Rectangle {
                         implicitWidth: useT.implicitWidth + 26; implicitHeight: 30; radius: 7
-                        color: root.nodeBusy ? "#6a6a70" : ZT.pal.fg
+                        color: root.nodeBusy ? ZTheme.primaryBusy : ZTheme.fg
                         Text { id: useT; anchors.centerIn: parent
                             text: root.nodeBusy ? "Checking…" : "Use this node"
-                            color: ZT.pal.panel; font.pixelSize: 12; font.bold: true }
+                            color: ZTheme.panel; font.pixelSize: 12; font.bold: true }
                         MouseArea { anchors.fill: parent; enabled: !root.nodeBusy
                             cursorShape: Qt.PointingHandCursor; onClicked: root.applyNode(nodeField.text) }
                     }
                     Rectangle {
                         implicitWidth: defT.implicitWidth + 22; implicitHeight: 30; radius: 7
-                        color: "transparent"; border.width: 1; border.color: ZT.pal.line2
+                        color: "transparent"; border.width: 1; border.color: ZTheme.line2
                         Text { id: defT; anchors.centerIn: parent; text: "Reset to default"
-                            color: ZT.pal.fg; font.pixelSize: 12 }
+                            color: ZTheme.fg; font.pixelSize: 12 }
                         MouseArea { anchors.fill: parent; enabled: !root.nodeBusy
                             cursorShape: Qt.PointingHandCursor; onClicked: root.applyNode("") }
                     }
                     Rectangle {
                         implicitWidth: closeT.implicitWidth + 22; implicitHeight: 30; radius: 7
-                        color: "transparent"; border.width: 1; border.color: ZT.pal.line2
+                        color: "transparent"; border.width: 1; border.color: ZTheme.line2
                         Text { id: closeT; anchors.centerIn: parent; text: "Close"
-                            color: ZT.pal.muted; font.pixelSize: 12 }
+                            color: ZTheme.muted; font.pixelSize: 12 }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                             onClicked: root.settingsOpen = false }
                     }
@@ -646,17 +725,34 @@ Rectangle {
         anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 22 }
         width: Math.min(noticeT.implicitWidth + 34, root.width - 40)
         height: 34; radius: 8; z: 50
-        color: root.noticeIsError ? "#3a1a14" : "#1c1c20"
-        border.width: 1; border.color: root.noticeIsError ? "#7a3325" : "#33333a"
+        color: root.noticeIsError ? ZTheme.toastErrBg : ZTheme.toastBg
+        border.width: 1; border.color: root.noticeIsError ? ZTheme.toastErrBd : ZTheme.toastBd
         Text { id: noticeT; anchors.centerIn: parent; width: parent.width - 28; elide: Text.ElideRight
-            text: root.noticeText; color: root.noticeIsError ? "#ffd9d2" : "#e8e8ec"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter }
+            text: root.noticeText; color: root.noticeIsError ? ZTheme.toastErrFg : ZTheme.toastFg; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter }
         MouseArea { anchors.fill: parent; onClicked: root.noticeText = "" }
     }
 
     // footer note
-    Rectangle { anchors.fill: parent; visible: !root.ready; color: ZT.pal.bg
+    Rectangle { anchors.fill: parent; visible: !root.ready; color: ZTheme.bg
         Column { anchors.centerIn: parent; spacing: 12
             BusyIndicator { running: !root.ready; anchors.horizontalCenter: parent.horizontalCenter }
-            Text { text: "Connecting to zonescan…"; color: ZT.pal.muted; font.pixelSize: 13; anchors.horizontalCenter: parent.horizontalCenter } }
+            Text { text: "Connecting to zonescan…"; color: ZTheme.muted; font.pixelSize: 13; anchors.horizontalCenter: parent.horizontalCenter } }
     }
+
+    // ── the shared ToolTip ───────────────────────────────────────────────────
+    // An attached ToolTip does NOT inherit Item.palette (verified: 0 of 17 roles reach it), so
+    // without this the ten `ToolTip.text:` sites across Main, ZoneRow, ZBadge, KvRow and
+    // TxFeedRow keep painting the light chip on a dark app.
+    //
+    // `ToolTip.toolTip` is ONE INSTANCE PER WINDOW — checked directly, the object reached from
+    // three different items compares identical — so these three lines cover all ten sites. The
+    // three roles are exactly what Basic's ToolTip.qml reads: toolTipBase (fill), toolTipText
+    // (label), dark (border). Explicit `restoreMode` because the default differs between Qt
+    // versions and there is nothing to restore to here.
+    Binding { target: root.ToolTip.toolTip; property: "palette.toolTipBase"
+              value: ZTheme.ctlToolTipBase; restoreMode: Binding.RestoreNone }
+    Binding { target: root.ToolTip.toolTip; property: "palette.toolTipText"
+              value: ZTheme.ctlToolTipText; restoreMode: Binding.RestoreNone }
+    Binding { target: root.ToolTip.toolTip; property: "palette.dark"
+              value: ZTheme.ctlDark; restoreMode: Binding.RestoreNone }
 }

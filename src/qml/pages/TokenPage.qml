@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import "../components"
+import "../theme"
 import "../theme.js" as ZT
 
 // Token detail (renderToken): overview (name/type/supply) + definition/sequencer kv,
@@ -198,16 +199,16 @@ Item {
             // loading / not-found
             Rectangle {
                 visible: !page.loaded || page.notFound || page.loadError !== ""
-                width: parent.width; height: 90; color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line
+                width: parent.width; height: 90; color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line
                 Column {
                     anchors.centerIn: parent; spacing: 8
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; color: ZT.pal.soft; font.pixelSize: 13
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; color: ZTheme.soft; font.pixelSize: 13
                         text: !page.loaded ? "loading token…"
                               : (page.notFound ? "token not found"
                                  : "couldn't load this token: " + page.loadError) }
                     Rectangle { visible: page.loadError !== ""; anchors.horizontalCenter: parent.horizontalCenter
-                        width: 60; height: 24; radius: 6; color: ZT.pal.panel; border.width: 1; border.color: ZT.pal.line2
-                        Text { anchors.centerIn: parent; text: "Retry"; color: ZT.pal.fg; font.pixelSize: 12 }
+                        width: 60; height: 24; radius: 6; color: ZTheme.panel; border.width: 1; border.color: ZTheme.line2
+                        Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.fg; font.pixelSize: 12 }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.retry() } }
                 }
             }
@@ -216,13 +217,13 @@ Item {
             Rectangle {
                 visible: page.loaded && !page.notFound && !!page.a
                 width: parent.width; height: ovwCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: ovwCol; width: parent.width
                     Phead { title: "Token"; count: page.a ? (page.a.name || ZT.sh(page.tokenId)) : "" }
                     // .ovw 3-tile grid: white cells with 1px gaps over a pal.line bg
                     Rectangle {
-                        width: parent.width; color: ZT.pal.line
+                        width: parent.width; color: ZTheme.line
                         implicitHeight: ovwGrid.implicitHeight
                         Grid {
                             id: ovwGrid; width: parent.width; columns: 3; columnSpacing: 1; rowSpacing: 1
@@ -237,7 +238,7 @@ Item {
                         x: 16; topPadding: 16; bottomPadding: 16; width: parent.width - 32; spacing: 7
                         KvRow { width: parent.width; explorer: page.explorer; k: "Definition account"; v: page.tokenId }
                         KvRowRich { width: parent.width; k: "Sequencer"; explorer: page.explorer
-                            vHtml: page.a ? ('<a href="zone:' + ZT.u(page.channel) + '" style="color:' + ZT.pal.link + '">' + ZT.esc(ZT.sh(page.channel)) + "</a>") : "" }
+                            vHtml: page.a ? ('<a href="zone:' + ZT.u(page.channel) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.sh(page.channel)) + "</a>") : "" }
                     }
                 }
             }
@@ -246,18 +247,18 @@ Item {
             Rectangle {
                 visible: page.loaded && !page.notFound && !!page.a
                 width: parent.width; height: holdCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: holdCol; width: parent.width
                     Phead { title: "Holders"; count: page.holdersLoadedOnce ? ("" + page.holders.length) : "" }
                     // column header
                     Rectangle {
-                        width: parent.width; height: 36; color: ZT.pal.theadBg
-                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+                        width: parent.width; height: 36; color: ZTheme.theadBg
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
                         Text { anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 16 }
-                            text: "HOLDER ACCOUNT"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+                            text: "HOLDER ACCOUNT"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
                         Text { anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 16 }
-                            text: "BALANCE"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+                            text: "BALANCE"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
                     }
                     // scrollable region (max-height:440 → 404 for the list under the 36px header)
                     Rectangle {
@@ -278,10 +279,10 @@ Item {
                                 required property var modelData
                                 width: ListView.view ? ListView.view.width : 0
                                 height: 40
-                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
                                 Text {
                                     anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 16 }
-                                    text: ZT.sh(modelData.account, 8, 6); color: ZT.pal.link
+                                    text: ZT.sh(modelData.account, 8, 6); color: ZTheme.link
                                     font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
                                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                         onClicked: page.explorer.navWallet(modelData.account, page.channel) }
@@ -289,7 +290,7 @@ Item {
                                 Text {
                                     anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 16 }
                                     text: modelData.balance != null ? ZT.grp(modelData.balance) : "-"
-                                    color: modelData.balance != null ? ZT.pal.fg : ZT.pal.muted
+                                    color: modelData.balance != null ? ZTheme.fg : ZTheme.muted
                                     font.pixelSize: 13; font.weight: modelData.balance != null ? Font.DemiBold : Font.Normal
                                     font.family: "ui-monospace, Menlo, Consolas, monospace"
                                 }
@@ -298,7 +299,7 @@ Item {
                                 wrapMode: Text.WordWrap
                                 visible: page.holders.length === 0 && !page.holdLoading
                                 text: page.holdError !== "" ? ("couldn't load holders: " + page.holdError) : "no holders indexed yet"
-                                color: ZT.pal.soft; font.pixelSize: 13 }
+                                color: ZTheme.soft; font.pixelSize: 13 }
                         }
                     }
                 }
@@ -309,7 +310,7 @@ Item {
                 visible: page.loaded && !page.notFound && !!page.a
                 width: parent.width
                 height: 46 + 44 + Math.max(160, Math.min(600, page.rows.length * 42 + 40))
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     anchors.fill: parent
                     Phead { title: "Transactions"; count: page.a ? ZT.num(page.a.tx_count) : "" }

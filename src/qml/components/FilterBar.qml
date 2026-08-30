@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../theme"
 import "../theme.js" as ZT
 
 // .filtbar — Visibility select · multi-select Type dropdown · Sort select.
@@ -11,7 +12,7 @@ Rectangle {
     signal changed()
     implicitHeight: 44
     color: "transparent"
-    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
 
     // Bumped by sync(); the type checkboxes and the Type button label reference it so they
     // re-read ZT.FLT (a plain JS var the binding engine cannot observe).
@@ -36,7 +37,7 @@ Rectangle {
         // ── Visibility ──
         RowLayout {
             spacing: 8
-            Text { text: "VISIBILITY"; color: ZT.pal.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
+            Text { text: "VISIBILITY"; color: ZTheme.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
             ComboBox {
                 id: visSel
                 Layout.preferredWidth: 104
@@ -51,7 +52,7 @@ Rectangle {
         // ── Type (multi-select) ──
         RowLayout {
             spacing: 8
-            Text { text: "TYPE"; color: ZT.pal.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
+            Text { text: "TYPE"; color: ZTheme.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
             Button {
                 id: typeBtn
                 Layout.preferredWidth: 120
@@ -63,15 +64,32 @@ Rectangle {
                 }
                 onClicked: typeMenu.open()
                 contentItem: RowLayout {
-                    Text { text: typeBtn.text; color: ZT.pal.fg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
-                    Text { text: "▾"; color: ZT.pal.soft; font.pixelSize: 10 }
+                    Text { text: typeBtn.text; color: ZTheme.fg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                    Text { text: "▾"; color: ZTheme.soft; font.pixelSize: 10 }
                 }
                 Popup {
                     id: typeMenu
                     y: typeBtn.height + 5
                     width: 180
                     padding: 6
-                    background: Rectangle { color: ZT.pal.panel; border.color: ZT.pal.line2; border.width: 1; radius: 9 }
+                    background: Rectangle { color: ZTheme.panel; border.color: ZTheme.line2; border.width: 1; radius: 9 }
+                    // A Popup is NOT in the item tree Main.qml's palette block reaches - it is
+                    // reparented into the window overlay. Verified: of the 17 roles set on the
+                    // root, exactly 0 arrive here, and the 11 CheckBoxes below would draw WHITE
+                    // indicator squares with near-black labels on a correctly-dark panel. That
+                    // is the loudest possible half-repaint, so the block is repeated on the
+                    // Popup itself. Roles are the ones Basic's CheckBox.qml actually reads -
+                    // base (indicator fill), mid (its border), text (the tick), windowText (the
+                    // label) - plus window/dark for the Popup's own frame, which our explicit
+                    // `background` currently covers but which must not go dark-on-dark if that
+                    // background is ever removed.
+                    palette.window:     ZTheme.ctlWindow
+                    palette.windowText: ZTheme.ctlWindowText
+                    palette.base:       ZTheme.ctlBase
+                    palette.text:       ZTheme.ctlText
+                    palette.mid:        ZTheme.ctlMid
+                    palette.dark:       ZTheme.ctlDark
+                    palette.highlight:  ZTheme.ctlHighlight
                     ColumnLayout {
                         spacing: 0
                         Repeater {
@@ -97,7 +115,7 @@ Rectangle {
         // ── Sort ──
         RowLayout {
             spacing: 8
-            Text { text: "SORT"; color: ZT.pal.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
+            Text { text: "SORT"; color: ZTheme.soft; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
             ComboBox {
                 id: sortSel
                 Layout.preferredWidth: 104

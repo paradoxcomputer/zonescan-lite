@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../theme"
 import "../theme.js" as ZT
 
 // One row of the 7-col tx feed: Hash · Visibility · Type · Status · Block · Age · Zone.
@@ -24,10 +25,10 @@ Rectangle {
     signal clicked()
 
     implicitHeight: 42
-    color: mouse.containsMouse || root.activeFocus ? ZT.pal.rowHover : "transparent"
-    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+    color: mouse.containsMouse || root.activeFocus ? ZTheme.rowHover : "transparent"
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
     Rectangle { visible: root.activeFocus; anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        width: 2; color: ZT.pal.link }
+        width: 2; color: ZTheme.link }
     MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
         onClicked: { root.forceActiveFocus(); root.clicked(); } }
 
@@ -60,7 +61,7 @@ Rectangle {
                 id: hashT
                 anchors { left: parent.left; right: copyBtn.visible ? copyBtn.left : parent.right; verticalCenter: parent.verticalCenter }
                 elide: Text.ElideMiddle
-                text: ZT.sh(root.tx.hash || "", 12, 8); color: ZT.pal.link
+                text: ZT.sh(root.tx.hash || "", 12, 8); color: ZTheme.link
                 font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
             }
             Rectangle {
@@ -68,8 +69,8 @@ Rectangle {
                 visible: (cellHover.hovered || copyMa.containsMouse) && !!root.tx.hash
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                 width: 18; height: 18; radius: 4
-                color: copyMa.containsMouse ? ZT.pal.line : "transparent"
-                Text { anchors.centerIn: parent; text: "⧉"; color: ZT.pal.soft; font.pixelSize: 11 }
+                color: copyMa.containsMouse ? ZTheme.line : "transparent"
+                Text { anchors.centerIn: parent; text: "⧉"; color: ZTheme.soft; font.pixelSize: 11 }
                 MouseArea {
                     id: copyMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                     onClicked: { if (root.explorer) root.explorer.copyText(root.tx.hash, "Hash"); }
@@ -94,18 +95,18 @@ Rectangle {
             ZBadge {
                 visible: !!root.finKey
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.finKey ? ZT.finBadge[root.finKey].label : ""
-                bg: root.finKey ? ZT.finBadge[root.finKey].bg : "transparent"
-                fg: root.finKey ? ZT.finBadge[root.finKey].fg : ZT.pal.soft
+                text: root.finKey ? ZTheme.finBadge[root.finKey].label : ""
+                bg: root.finKey ? ZTheme.finBadge[root.finKey].bg : "transparent"
+                fg: root.finKey ? ZTheme.finBadge[root.finKey].fg : ZTheme.soft
                 bd: "transparent"
             }
             Text { visible: !root.finKey; anchors.verticalCenter: parent.verticalCenter
-                text: "-"; color: ZT.pal.soft; font.pixelSize: 12 }
+                text: "-"; color: ZTheme.soft; font.pixelSize: 12 }
         }
         // Block
         Text {
             Layout.preferredWidth: root.wBlock
-            color: root.tx.kind === "raw" ? ZT.pal.soft : ZT.pal.fg
+            color: root.tx.kind === "raw" ? ZTheme.soft : ZTheme.fg
             font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
             text: root.tx.kind === "raw"
                 ? ("L1 " + (root.tx.slot != null ? ZT.num(root.tx.slot) : "-"))
@@ -114,7 +115,7 @@ Rectangle {
         // Age
         Text {
             Layout.preferredWidth: root.wAge; visible: root.wAge > 0
-            text: ZT.ageOf(root.tx); color: ZT.pal.muted; font.pixelSize: 12
+            text: ZT.ageOf(root.tx); color: ZTheme.muted; font.pixelSize: 12
         }
         // Zone — the header cell honoured showZone but this one never did, so a zone,
         // program or token feed repeated one identical channel down its widest column.
@@ -123,7 +124,7 @@ Rectangle {
             // aliasOf reads a curated static map, so unlike the live-state helpers around it
             // this needs no `rev` dependency to stay correct.
             text: ZT.aliasOf(root.tx.channel) || root.tx.channel_short || ZT.sh(root.tx.channel || "", 8, 4)
-            color: ZT.pal.link; font.pixelSize: 12
+            color: ZTheme.link; font.pixelSize: 12
             font.family: "ui-monospace, Menlo, Consolas, monospace"
         }
         Item { Layout.fillWidth: !root.showZone; visible: !root.showZone }

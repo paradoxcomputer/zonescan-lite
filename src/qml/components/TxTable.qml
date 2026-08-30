@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "../theme.js" as ZT
+import "../theme"
 
 // The shared 7-col tx feed: sticky column header + scrolling rows + infinite
 // scroll. Used by every list view (home / zone / program / token / account).
@@ -35,16 +35,16 @@ Column {
     signal rowClicked(var tx)
 
     Rectangle {
-        width: parent.width; height: 36; color: ZT.pal.theadBg
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+        width: parent.width; height: 36; color: ZTheme.theadBg
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
         RowLayout { anchors { fill: parent; leftMargin: 16; rightMargin: 16 } spacing: 12
-            Text { Layout.preferredWidth: root.wHash; text: "TXN HASH"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.preferredWidth: root.wVis; visible: root.wVis > 0; text: "VIS"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.preferredWidth: root.wType; visible: root.wType > 0; text: "TYPE"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.preferredWidth: root.wStatus; visible: root.wStatus > 0; text: "STATUS"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.preferredWidth: root.wBlock; text: "BLOCK"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.preferredWidth: root.wAge; visible: root.wAge > 0; text: "AGE"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-            Text { Layout.fillWidth: true; visible: root.showZone; text: "ZONE"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wHash; text: "TXN HASH"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wVis; visible: root.wVis > 0; text: "VIS"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wType; visible: root.wType > 0; text: "TYPE"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wStatus; visible: root.wStatus > 0; text: "STATUS"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wBlock; text: "BLOCK"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.preferredWidth: root.wAge; visible: root.wAge > 0; text: "AGE"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+            Text { Layout.fillWidth: true; visible: root.showZone; text: "ZONE"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
             Item { Layout.fillWidth: !root.showZone; visible: !root.showZone }
         }
     }
@@ -68,14 +68,14 @@ Column {
                 && contentY + height >= contentHeight - 300) root.atEnd();
         }
         Text { anchors.centerIn: parent; visible: list.count === 0 && !root.loading
-            text: root.emptyText; color: ZT.pal.soft; font.pixelSize: 13 }
+            text: root.emptyText; color: ZTheme.soft; font.pixelSize: 13 }
         // First fetch: the empty label was gated on !loading and the footer on count > 0, so
         // the whole body rendered blank for up to the 15s request ceiling and then flipped
         // straight to "no transactions".
         Column {
             anchors.centerIn: parent; spacing: 8; visible: list.count === 0 && root.loading
             BusyIndicator { running: parent.visible; anchors.horizontalCenter: parent.horizontalCenter; implicitWidth: 28; implicitHeight: 28 }
-            Text { text: root.loadingText; color: ZT.pal.soft; font.pixelSize: 13; anchors.horizontalCenter: parent.horizontalCenter }
+            Text { text: root.loadingText; color: ZTheme.soft; font.pixelSize: 13; anchors.horizontalCenter: parent.horizontalCenter }
         }
     }
     // loading footer (pulsing dots) — while a page fetch is in flight
@@ -84,12 +84,12 @@ Column {
         width: parent.width; height: 34; color: "transparent"
         visible: (root.loading && list.count > 0) || (root.done && root.doneNote !== "" && list.count > 0)
         Text { visible: root.done && !root.loading; anchors.centerIn: parent
-            text: root.doneNote; color: ZT.pal.soft; font.pixelSize: 11 }
+            text: root.doneNote; color: ZTheme.soft; font.pixelSize: 11 }
         Row {
             anchors.centerIn: parent; spacing: 4; visible: root.loading
-            Text { text: "loading"; color: ZT.pal.soft; font.pixelSize: 12 }
+            Text { text: "loading"; color: ZTheme.soft; font.pixelSize: 12 }
             Repeater { model: 3
-                Rectangle { width: 6; height: 6; radius: 3; color: ZT.pal.soft; anchors.verticalCenter: parent.verticalCenter
+                Rectangle { width: 6; height: 6; radius: 3; color: ZTheme.soft; anchors.verticalCenter: parent.verticalCenter
                     SequentialAnimation on opacity {
                         loops: Animation.Infinite
                         PauseAnimation { duration: index * 150 }

@@ -1,7 +1,7 @@
 {
   "name": "zonescan_lite",
   "display_name": "ZoneScan Lite",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": "paradox.computer",
   "license": "MIT OR Apache-2.0",
   "type": "ui_qml",

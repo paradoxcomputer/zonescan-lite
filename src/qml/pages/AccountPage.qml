@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+import "../theme"
 import "../theme.js" as ZT
 
 // Account / wallet (renderWallet): a 4-tile overview (L2/L1 balances, nonce, tx
@@ -172,16 +173,16 @@ Item {
             // loading / not-found / failed
             Rectangle {
                 visible: !page.loaded || page.notFound || page.loadError !== ""
-                width: parent.width; height: 90; color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line
+                width: parent.width; height: 90; color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line
                 Column {
                     anchors.centerIn: parent; spacing: 8
-                    Text { anchors.horizontalCenter: parent.horizontalCenter; color: ZT.pal.soft; font.pixelSize: 13
+                    Text { anchors.horizontalCenter: parent.horizontalCenter; color: ZTheme.soft; font.pixelSize: 13
                         text: !page.loaded ? "loading account…"
                               : (page.notFound ? "account not found"
                                  : "couldn't load this account: " + page.loadError) }
                     Rectangle { visible: page.loadError !== ""; anchors.horizontalCenter: parent.horizontalCenter
-                        width: 60; height: 24; radius: 6; color: ZT.pal.panel; border.width: 1; border.color: ZT.pal.line2
-                        Text { anchors.centerIn: parent; text: "Retry"; color: ZT.pal.fg; font.pixelSize: 12 }
+                        width: 60; height: 24; radius: 6; color: ZTheme.panel; border.width: 1; border.color: ZTheme.line2
+                        Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.fg; font.pixelSize: 12 }
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.retry() } }
                 }
             }
@@ -190,7 +191,7 @@ Item {
             Rectangle {
                 visible: page.loaded && !page.notFound && page.acct
                 width: parent.width; height: ovwCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: ovwCol; width: parent.width
                     Phead {
@@ -199,7 +200,7 @@ Item {
                     }
                     // .ovw — 4 tiles over a pal.line bg (1px gaps)
                     Rectangle {
-                        width: parent.width; color: ZT.pal.line
+                        width: parent.width; color: ZTheme.line
                         implicitHeight: ovwGrid.implicitHeight
                         GridLayout {
                             id: ovwGrid
@@ -239,13 +240,13 @@ Item {
                             vHtml: {
                                 if (page.channel || !page.acct) return "";
                                 var chans = page.acct.channels || [];
-                                if (!chans.length) return '<span style="color:' + ZT.pal.muted + '">none</span>';
+                                if (!chans.length) return '<span style="color:' + ZTheme.muted + '">none</span>';
                                 var parts = [];
                                 for (var i = 0; i < chans.length; i++) {
                                     var c = chans[i];
-                                    parts.push('<a href="wallet:' + ZT.u(c.channel) + ':' + ZT.u(page.accId) + '" style="color:' + ZT.pal.link + '">'
+                                    parts.push('<a href="wallet:' + ZT.u(c.channel) + ':' + ZT.u(page.accId) + '" style="color:' + ZTheme.link + '">'
                                         + ZT.chanLabel(c.channel, c.channel_short) + '</a> '
-                                        + '<span style="color:' + ZT.pal.muted + '">(' + ZT.num(c.tx_count) + ' tx)</span>');
+                                        + '<span style="color:' + ZTheme.muted + '">(' + ZT.num(c.tx_count) + ' tx)</span>');
                                 }
                                 return parts.join(" &nbsp; ");
                             }
@@ -260,18 +261,18 @@ Item {
             Rectangle {
                 visible: !!(page.acct && page.acct.holdings && page.acct.holdings.length)
                 width: parent.width; height: holdCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: holdCol; width: parent.width
                     Phead { title: "Token holdings"; count: (page.acct && page.acct.holdings ? page.acct.holdings.length : 0) + "" }
                     // header row
                     Rectangle {
-                        width: parent.width; height: 36; color: ZT.pal.theadBg
-                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+                        width: parent.width; height: 36; color: ZTheme.theadBg
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
                         RowLayout { anchors { fill: parent; leftMargin: 16; rightMargin: 16 } spacing: 12
-                            Text { Layout.fillWidth: true; text: "Token"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-                            Text { Layout.preferredWidth: 140; horizontalAlignment: Text.AlignRight; text: "Balance"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
-                            Text { Layout.preferredWidth: 170; text: "Holding account (ATA)"; color: ZT.pal.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+                            Text { Layout.fillWidth: true; text: "Token"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+                            Text { Layout.preferredWidth: 140; horizontalAlignment: Text.AlignRight; text: "Balance"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
+                            Text { Layout.preferredWidth: 170; text: "Holding account (ATA)"; color: ZTheme.soft; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.4 }
                         }
                     }
                     Column {
@@ -281,13 +282,13 @@ Item {
                             delegate: Rectangle {
                                 required property var modelData
                                 width: parent.width; height: 40; color: "transparent"
-                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
                                 RowLayout { anchors { fill: parent; leftMargin: 16; rightMargin: 16 } spacing: 12
                                     // Token
                                     Text {
                                         Layout.fillWidth: true; elide: Text.ElideRight
                                         text: modelData.name ? modelData.name : ZT.sh(modelData.definition || "", 6, 4)
-                                        color: modelData.name ? ZT.pal.link : ZT.pal.muted
+                                        color: modelData.name ? ZTheme.link : ZTheme.muted
                                         font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
                                         MouseArea { anchors.fill: parent; enabled: !!modelData.name && !!modelData.definition
                                             cursorShape: Qt.PointingHandCursor
@@ -297,7 +298,7 @@ Item {
                                     Text {
                                         Layout.preferredWidth: 140; horizontalAlignment: Text.AlignRight
                                         text: modelData.balance != null ? ZT.grp(modelData.balance) : "-"
-                                        color: modelData.balance != null ? ZT.pal.fg : ZT.pal.muted
+                                        color: modelData.balance != null ? ZTheme.fg : ZTheme.muted
                                         font.pixelSize: 13; font.weight: modelData.balance != null ? Font.DemiBold : Font.Normal
                                         font.family: "ui-monospace, Menlo, Consolas, monospace"
                                     }
@@ -305,7 +306,7 @@ Item {
                                     Text {
                                         Layout.preferredWidth: 170; elide: Text.ElideRight
                                         text: ZT.sh(modelData.account || "", 6, 4)
-                                        color: ZT.pal.link; font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
+                                        color: ZTheme.link; font.pixelSize: 13; font.family: "ui-monospace, Menlo, Consolas, monospace"
                                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                             onClicked: page.explorer.navWallet(modelData.account, page.channel || page.acct.channel) }
                                     }
@@ -323,7 +324,7 @@ Item {
                 visible: page.loaded && !page.notFound && page.acct
                 width: parent.width
                 height: Math.max(360, page.height - 240)
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     anchors.fill: parent
                     Phead { title: "Transactions"; count: ZT.num(page.acct ? page.acct.tx_count : null) }

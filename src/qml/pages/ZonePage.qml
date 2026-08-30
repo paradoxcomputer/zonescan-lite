@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+import "../theme"
 import "../theme.js" as ZT
 
 // Zone / channel detail (renderZone): a header panel (Sequencer|Channel title +
@@ -134,19 +135,19 @@ Item {
             // ── header panel: title + chanLabel + badges, overview grid, kv grid ──
             Rectangle {
                 width: parent.width; implicitHeight: body.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: body; width: parent.width
                     Phead {
                         title: page.seq && page.seq.data_channel ? "Channel" : "Sequencer"
                         RichLabel { explorer: page.explorer; text: ZT.chanLabel(page.seq.channel, page.seq.channel_short); font.pixelSize: 13 }
                         ZBadge { visible: ZT.dataBadge(page.seq); fontPx: 10; text: "DATA"
-                            bg: ZT.verBadge.data.bg; fg: ZT.verBadge.data.fg; bd: ZT.verBadge.data.bg }
+                            bg: ZTheme.verBadge.data.bg; fg: ZTheme.verBadge.data.fg; bd: ZTheme.verBadge.data.bg }
                         ZBadge { visible: !!page.seq.version; fontPx: 10
-                            property var vc: ZT.verBadge[page.seq.version] || { bg: "#eef0f4", fg: ZT.pal.soft }
+                            property var vc: ZTheme.verBadge[page.seq.version] || ZTheme.verUnknown
                             text: (page.seq.version || "").toUpperCase(); bg: vc.bg; fg: vc.fg; bd: vc.bg }
                         Text { property var cb: (page.rev, ZT.consBadge(page.seq)); visible: !!cb
-                            text: cb ? cb.text : ""; color: cb && cb.ok ? ZT.pal.green : ZT.pal.red
+                            text: cb ? cb.text : ""; color: cb && cb.ok ? ZTheme.green : ZTheme.red
                             font.pixelSize: 11; font.weight: Font.Bold }
                     }
 
@@ -159,11 +160,11 @@ Item {
                         StatTile { Layout.fillWidth: true; k: "Throughput"; v: ZT.bpmStr(page.seq) || "-" }
                         // Status — value coloured green (alive) / soft (idle), so a custom cell
                         Rectangle {
-                            Layout.fillWidth: true; color: "#ffffff"; implicitHeight: stc.implicitHeight + 32
-                            Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: ZT.pal.line }
+                            Layout.fillWidth: true; color: ZTheme.panel; implicitHeight: stc.implicitHeight + 32
+                            Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: ZTheme.line }
                             Column { id: stc; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 20; rightMargin: 20; topMargin: 16 } spacing: 4
-                                Text { text: "STATUS"; color: ZT.pal.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
-                                Text { text: page.seq.alive ? "ALIVE" : "IDLE"; color: page.seq.alive ? ZT.pal.green : ZT.pal.soft
+                                Text { text: "STATUS"; color: ZTheme.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
+                                Text { text: page.seq.alive ? "ALIVE" : "IDLE"; color: page.seq.alive ? ZTheme.green : ZTheme.soft
                                     font.pixelSize: 20; font.weight: Font.DemiBold; font.family: "ui-monospace, Menlo, Consolas, monospace" }
                             }
                         }
@@ -196,28 +197,28 @@ Item {
             // ── transactions feed (channel-scoped) ──
             Rectangle {
                 width: parent.width; height: Math.max(460, page.height - 240)
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     anchors.fill: parent
                     Phead {
                         title: "Transactions"
                         Text { visible: !!(page.state && page.state.skip_clock); text: "clock ticks not indexed"
-                            color: ZT.pal.muted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                            color: ZTheme.muted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                     }
                     FilterBar { id: filterBar; width: parent.width; onChanged: page.resetFeed() }
                     Rectangle {
                         width: parent.width; height: page.feedError !== "" ? 34 : 0
-                        visible: height > 0; color: "#fdece8"
+                        visible: height > 0; color: ZTheme.warnBg
                         Row {
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
                                       leftMargin: 16; rightMargin: 16 }
                             spacing: 10
                             Text { text: "Couldn't load transactions: " + page.feedError
-                                color: "#8c2d1c"; font.pixelSize: 11; elide: Text.ElideRight
+                                color: ZTheme.warnFg; font.pixelSize: 11; elide: Text.ElideRight
                                 width: parent.width - 70; anchors.verticalCenter: parent.verticalCenter }
-                            Rectangle { width: 56; height: 22; radius: 6; color: "#ffffff"; border.width: 1; border.color: "#e0b4a8"
+                            Rectangle { width: 56; height: 22; radius: 6; color: ZTheme.warnBtnBg; border.width: 1; border.color: ZTheme.warnBd
                                 anchors.verticalCenter: parent.verticalCenter
-                                Text { anchors.centerIn: parent; text: "Retry"; color: "#8c2d1c"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.warnFg; font.pixelSize: 11; font.weight: Font.DemiBold }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.retryFeed() } }
                         }
                     }

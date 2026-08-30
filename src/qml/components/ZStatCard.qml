@@ -1,5 +1,5 @@
 import QtQuick
-import "../theme.js" as ZT
+import "../theme"
 
 // .card — white→#f6f6f8 gradient card with .k label / .v mono value / .s sublabel.
 Rectangle {
@@ -12,10 +12,10 @@ Rectangle {
     implicitHeight: col.implicitHeight + 32
     radius: 12
     border.width: 1
-    border.color: ZT.pal.line
+    border.color: ZTheme.line
     gradient: Gradient {
-        GradientStop { position: 0.0; color: "#ffffff" }
-        GradientStop { position: 1.0; color: "#f6f6f8" }
+        GradientStop { position: 0.0; color: ZTheme.cardA }
+        GradientStop { position: 1.0; color: ZTheme.cardB }
     }
 
     Column {
@@ -24,18 +24,18 @@ Rectangle {
                   leftMargin: 18; rightMargin: 18; topMargin: 16 }
         spacing: 3
         Text {
-            text: root.k.toUpperCase(); color: ZT.pal.soft
+            text: root.k.toUpperCase(); color: ZTheme.soft
             font.pixelSize: 10; font.letterSpacing: 0.7; font.weight: Font.DemiBold
             font.family: "-apple-system, Segoe UI, Roboto, sans-serif"
         }
         Text {
-            text: root.v; color: ZT.pal.navy
+            text: root.v; color: ZTheme.navy
             font.pixelSize: 21; font.weight: Font.DemiBold
             font.family: "ui-monospace, Menlo, Consolas, monospace"
         }
         Text {
             visible: root.s.length > 0
-            text: root.s; color: ZT.pal.muted; font.pixelSize: 12
+            text: root.s; color: ZTheme.muted; font.pixelSize: 12
             font.family: "-apple-system, Segoe UI, Roboto, sans-serif"
         }
         Sparkline {

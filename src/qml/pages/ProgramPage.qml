@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+import "../theme"
 import "../theme.js" as ZT
 
 // Program detail (renderProgram): overview (name/guess · sequencer · exact tx
@@ -25,8 +26,8 @@ Item {
     readonly property string gHtml: {
         page.rev; var gg = page.g; if (!gg) return "";
         var s = ZT.guessHtml(gg);
-        if (gg.token) s += ' · defines <span style="color:' + ZT.pal.muted + ';font-style:italic"><span style="font-style:normal">≈</span> ' + ZT.esc(gg.token) + "</span>";
-        s += ' <span style="color:' + ZT.pal.muted + ';font-size:12px">' + ZT.esc(ZT.guessTip(gg)) + "</span>";
+        if (gg.token) s += ' · defines <span style="color:' + ZTheme.muted + ';font-style:italic"><span style="font-style:normal">≈</span> ' + ZT.esc(gg.token) + "</span>";
+        s += ' <span style="color:' + ZTheme.muted + ';font-size:12px">' + ZT.esc(ZT.guessTip(gg)) + "</span>";
         return s;
     }
     // schema state (module state — re-eval on rev)
@@ -35,8 +36,61 @@ Item {
     readonly property bool hasName: { page.rev; return !!(ZT.PROGS && ZT.PROGS[page.progId]); }
 
     property string txCount: "…"
-    property string schemaMsgHtml: ""
-    property string schemaPrevHtml: ""
+
+    // ── schema form output: STRUCTURED STATE, rendered by two bindings ───────────
+    // These were 17 HTML strings built inside doPreview()/doSubmit() and their async callbacks.
+    // Every one baked a hex straight into a <span style="color:…">, from a closure that is dead
+    // by the time anything else runs, so a theme flip could not reach any of them: the preview
+    // and the accept/reject message kept the previous theme's ink until the next click.
+    //
+    // schemaMsg  : { kind: "ok" | "err" | "info", text }   - text is already HTML-escaped
+    // schemaPrev : { kind: "rows", schema, samples } | { kind: "err" | "info", text }
+    //
+    // The preview MUST retain {schema, samples} rather than a rendered string: decodeBySchema()
+    // -> fmtSchema() bakes pal.muted into every field label, so a pre-rendered preview is
+    // exactly the thing that cannot be re-inked.
+    property var schemaMsg: null
+    property var schemaPrev: null
+
+    readonly property string schemaMsgHtml: page.fmtMsg(page.schemaMsg)
+    readonly property string schemaPrevHtml: page.fmtPrev(page.schemaPrev)
+
+    function fmtMsg(m) {
+        if (!m) return "";
+        var c = m.kind === "ok" ? ZTheme.green : (m.kind === "err" ? ZTheme.red : ZTheme.muted);
+        return '<span style="color:' + c + '">' + m.text + "</span>";
+    }
+    function fmtPrev(pv) {
+        if (!pv) return "";
+        if (pv.kind !== "rows")
+            return '<span style="color:' + (pv.kind === "err" ? ZTheme.red : ZTheme.muted) + '">'
+                 + pv.text + "</span>";
+        // TOTAL for the same reason as TxPage.instrHtml: r0dec() reaches theme.js's u64/u128
+        // decoders, which call BigInt, which the QML engine does not have (Qt 6.9.2 and 6.11.1
+        // both). The imperative version threw inside an async callback and simply left the
+        // preview unset; a binding would report it on every re-evaluation instead.
+        var out = [];
+        try {
+        for (var j = 0; j < pv.samples.length; j++) {
+            var w = pv.samples[j];
+            var d = ZT.r0dec(w, pv.schema, 0), full = (d.p === w.length);
+            // rich(), not a bare call: fmtSchema bakes pal.muted and reads no ZTheme property,
+            // so without the re-invocation channel the decoded fields stay last theme's grey.
+            var dec = ZTheme.rich(ZT.decodeBySchema, w, pv.schema)
+                      || ('<span style="color:' + ZTheme.muted + '">(decode error)</span>');
+            out.push('<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px">'
+                + (full ? '<span style="color:' + ZTheme.green + '">✓</span>'
+                        : '<span style="color:' + ZTheme.red + '">✗</span>')
+                + " " + dec
+                + (full ? "" : ' <span style="color:' + ZTheme.red + '">- consumed ' + d.p + "/" + w.length + " words</span>")
+                + "</div>");
+        }
+        } catch (e) {
+            return '<span style="color:' + ZTheme.red + '">preview failed: ' + ZT.esc(String(e)) + "</span>";
+        }
+        return out.length ? out.join("")
+                          : '<span style="color:' + ZTheme.muted + '">no instructions to preview</span>';
+    }
 
     // ── scoped feed controller (cursor pagination + live prepend, no filter bar) ──
     property var rows: []
@@ -138,62 +192,53 @@ Item {
     }
     function doPreview() {
         var ps = parseSchema();
-        if (ps.kind === "bad") { page.schemaPrevHtml = '<span style="color:' + ZT.pal.red + '">invalid JSON</span>'; return; }
-        if (ps.kind === "empty") { page.schemaPrevHtml = ""; return; }
+        if (ps.kind === "bad") { page.schemaPrev = ({ kind: "err", text: "invalid JSON" }); return; }
+        if (ps.kind === "empty") { page.schemaPrev = null; return; }
         var sc = ps.value;
-        page.schemaPrevHtml = '<span style="color:' + ZT.pal.muted + '">decoding samples…</span>';
+        page.schemaPrev = ({ kind: "info", text: "decoding samples…" });
         explorer.watch(backend.getTxsQuery("channel=" + encodeURIComponent(page.channel) + "&program=" + encodeURIComponent(page.progId) + "&clock=1&limit=8"),
             function (r) {
-                if (!r || !r.ok) { page.schemaPrevHtml = '<span style="color:' + ZT.pal.muted + '">preview failed: ' + ZT.esc((r && r.error) || "no response") + "</span>"; return; }
+                if (!r || !r.ok) { page.schemaPrev = ({ kind: "info", text: "preview failed: " + ZT.esc((r && r.error) || "no response") }); return; }
                 var txs = r.items || [];
                 var samples = [];
-                for (var i = 0; i < txs.length; i++) { var t = txs[i]; if (t.instruction_data && t.instruction_data.length) samples.push(t); }
-                samples = samples.slice(0, 8);
-                var out = [];
-                for (var j = 0; j < samples.length; j++) {
-                    var w = samples[j].instruction_data;
-                    var r = ZT.r0dec(w, sc, 0), full = (r.p === w.length);
-                    var dec = ZT.decodeBySchema(w, sc) || ('<span style="color:' + ZT.pal.muted + '">(decode error)</span>');
-                    out.push('<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px">'
-                        + (full ? '<span style="color:' + ZT.pal.green + '">✓</span>' : '<span style="color:' + ZT.pal.red + '">✗</span>')
-                        + " " + dec
-                        + (full ? "" : ' <span style="color:' + ZT.pal.red + '">- consumed ' + r.p + "/" + w.length + " words</span>")
-                        + "</div>");
+                for (var i = 0; i < txs.length && samples.length < 8; i++) {
+                    var t = txs[i];
+                    if (t.instruction_data && t.instruction_data.length) samples.push(t.instruction_data);
                 }
-                page.schemaPrevHtml = out.length ? out.join("") : '<span style="color:' + ZT.pal.muted + '">no instructions to preview</span>';
+                page.schemaPrev = ({ kind: "rows", schema: sc, samples: samples });
             },
-            function () { page.schemaPrevHtml = '<span style="color:' + ZT.pal.muted + '">preview failed</span>'; });
+            function () { page.schemaPrev = ({ kind: "info", text: "preview failed" }); });
     }
     function doSubmit() {
         var ps = parseSchema();
-        if (ps.kind === "bad") { page.schemaMsgHtml = '<span style="color:' + ZT.pal.red + '">invalid JSON</span>'; return; }
-        if (ps.kind === "empty") { page.schemaMsgHtml = '<span style="color:' + ZT.pal.muted + '">paste a schema first</span>'; return; }
+        if (ps.kind === "bad") { page.schemaMsg = ({ kind: "err", text: "invalid JSON" }); return; }
+        if (ps.kind === "empty") { page.schemaMsg = ({ kind: "info", text: "paste a schema first" }); return; }
         var sc = ps.value;
         var nm = nameInput.visible ? (nameInput.text || "").trim() : "";
-        page.schemaMsgHtml = '<span style="color:' + ZT.pal.muted + '">validating…</span>';
+        page.schemaMsg = ({ kind: "info", text: "validating…" });
         var body = JSON.stringify({ channel: page.channel, program_id: page.progId, instruction: sc, name: nm });
         explorer.watch(backend.submitSchema(body),
             function (r) {
                 r = r || {};
-                if (!r.ok) { page.schemaMsgHtml = '<span style="color:' + ZT.pal.red + '">' + ZT.esc(r.error || "error") + "</span>"; return; }
+                if (!r.ok) { page.schemaMsg = ({ kind: "err", text: ZT.esc(r.error || "error") }); return; }
                 if (r.stored || r.named) {
                     var bits = [];
                     if (r.stored) bits.push("schema accepted (" + r.passed + "/" + r.tested + ")");
                     if (r.named) bits.push("named &ldquo;" + ZT.esc(nm) + "&rdquo;");
-                    page.schemaMsgHtml = '<span style="color:' + ZT.pal.green + '">✓ ' + bits.join(" · ") + " - reloading…</span>";
+                    page.schemaMsg = ({ kind: "ok", text: "✓ " + bits.join(" · ") + " - reloading…" });
                     page.reload();
                     // getSchemas() republishes the schemas PROP, so every open page re-decodes
                     // at once instead of waiting for the periodic registry tick.
                     explorer.watch(backend.getSchemas(),
-                        function () { page.schemaMsgHtml = '<span style="color:' + ZT.pal.green + '">✓ ' + bits.join(" · ") + "</span>"; },
+                        function () { page.schemaMsg = ({ kind: "ok", text: "✓ " + bits.join(" · ") }); },
                         function () {});
                 } else if (r.already_exists) {
-                    page.schemaMsgHtml = '<span style="color:' + ZT.pal.muted + '">a schema is already registered for this program</span>';
+                    page.schemaMsg = ({ kind: "info", text: "a schema is already registered for this program" });
                 } else {
-                    page.schemaMsgHtml = '<span style="color:' + ZT.pal.red + '">✗ rejected - decodes only ' + r.passed + "/" + r.tested + " instructions exactly</span>";
+                    page.schemaMsg = ({ kind: "err", text: "✗ rejected - decodes only " + r.passed + "/" + r.tested + " instructions exactly" });
                 }
             },
-            function (e) { page.schemaMsgHtml = '<span style="color:' + ZT.pal.red + '">error: ' + e + "</span>"; });
+            function (e) { page.schemaMsg = ({ kind: "err", text: "error: " + e }); });
     }
 
     // createObject applies initial properties BEFORE completion, so these fired ahead of
@@ -223,18 +268,18 @@ Item {
             // ── overview panel ──
             Rectangle {
                 width: parent.width; height: ovwCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: ovwCol; width: parent.width
                     Phead {
                         title: "Program"
                         RichLabel { explorer: page.explorer; text: page.nameHtml
-                            color: ZT.pal.soft; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                            color: ZTheme.soft; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                     }
                     // .ovw 3-tile grid (1px gaps over the line color, bottom border)
                     Rectangle {
                         id: ovwWrap
-                        width: parent.width; color: ZT.pal.line
+                        width: parent.width; color: ZTheme.line
                         implicitHeight: ovw.implicitHeight + 1
                         property real cw: (width - 2) / 3
                         property real cellH: Math.max(c1.implicitHeight, c2.implicitHeight, c3.implicitHeight) + 32
@@ -242,29 +287,29 @@ Item {
                             id: ovw; columns: 3; columnSpacing: 1; rowSpacing: 1; width: parent.width
                             // Program
                             Rectangle {
-                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZT.pal.panel
+                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZTheme.panel
                                 Column { id: c1; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 20; rightMargin: 20; topMargin: 16 } spacing: 4
-                                    Text { text: "PROGRAM"; color: ZT.pal.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
+                                    Text { text: "PROGRAM"; color: ZTheme.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
                                     RichLabel { width: parent.width; explorer: page.explorer; text: page.nameHtml
-                                        color: ZT.pal.navy; font.pixelSize: 15; font.weight: Font.DemiBold
+                                        color: ZTheme.navy; font.pixelSize: 15; font.weight: Font.DemiBold
                                         font.family: "ui-monospace, Menlo, Consolas, monospace"; wrapMode: Text.WrapAnywhere }
                                 }
                             }
                             // Sequencer
                             Rectangle {
-                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZT.pal.panel
+                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZTheme.panel
                                 Column { id: c2; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 20; rightMargin: 20; topMargin: 16 } spacing: 4
-                                    Text { text: "SEQUENCER"; color: ZT.pal.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
+                                    Text { text: "SEQUENCER"; color: ZTheme.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
                                     RichLabel { width: parent.width; explorer: page.explorer; font.pixelSize: 13
-                                        text: '<a href="zone:' + ZT.u(page.channel) + '" style="color:' + ZT.pal.link + '">' + ZT.esc(ZT.sh(page.channel)) + "</a>" }
+                                        text: '<a href="zone:' + ZT.u(page.channel) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.sh(page.channel)) + "</a>" }
                                 }
                             }
                             // Transactions
                             Rectangle {
-                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZT.pal.panel
+                                width: ovwWrap.cw; height: ovwWrap.cellH; color: ZTheme.panel
                                 Column { id: c3; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 20; rightMargin: 20; topMargin: 16 } spacing: 4
-                                    Text { text: "TRANSACTIONS"; color: ZT.pal.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
-                                    Text { text: page.txCount; color: ZT.pal.navy; font.pixelSize: 20; font.weight: Font.DemiBold
+                                    Text { text: "TRANSACTIONS"; color: ZTheme.soft; font.pixelSize: 11; font.letterSpacing: 0.5 }
+                                    Text { text: page.txCount; color: ZTheme.navy; font.pixelSize: 20; font.weight: Font.DemiBold
                                         font.family: "ui-monospace, Menlo, Consolas, monospace" }
                                 }
                             }
@@ -285,20 +330,20 @@ Item {
             Rectangle {
                 visible: !!page.schema
                 width: parent.width; height: haveCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: haveCol; width: parent.width
                     Phead { title: "Instruction schema" }
                     Column {
                         x: 16; width: parent.width - 32; topPadding: 16; bottomPadding: 16; spacing: 8
                         Text { width: parent.width; text: "A schema is registered - instructions decode into typed fields."
-                            color: ZT.pal.muted; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                            color: ZTheme.muted; font.pixelSize: 12; wrapMode: Text.WordWrap }
                         Rectangle {
                             width: parent.width; height: schemaJson.implicitHeight + 20
-                            color: ZT.pal.panel2; radius: 6
+                            color: ZTheme.panel2; radius: 6
                             Text { id: schemaJson; anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 10; rightMargin: 10; topMargin: 10 }
                                 text: page.schema ? JSON.stringify(page.schema) : ""
-                                color: ZT.pal.fg; font.pixelSize: 12; font.family: "ui-monospace, Menlo, Consolas, monospace"
+                                color: ZTheme.fg; font.pixelSize: 12; font.family: "ui-monospace, Menlo, Consolas, monospace"
                                 wrapMode: Text.WrapAnywhere }
                         }
                     }
@@ -309,7 +354,7 @@ Item {
             Rectangle {
                 visible: !page.schema && page.isCustom
                 width: parent.width; height: propCol.implicitHeight
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     id: propCol; width: parent.width
                     Phead { title: "Instruction schema (ABI)"; count: "propose" }
@@ -317,7 +362,7 @@ Item {
                         x: 16; width: parent.width - 32; topPadding: 16; bottomPadding: 16; spacing: 8
                         RichLabel {
                             width: parent.width; explorer: page.explorer
-                            color: ZT.pal.muted; font.pixelSize: 12
+                            color: ZTheme.muted; font.pixelSize: 12
                             text: 'No schema yet, so instructions show as raw words. Anyone can propose one - paste the program\'s <b>instruction type</b>. It\'s accepted only if it decodes this program\'s <b>real on-chain instructions exactly</b>. Examples: <code>{"struct":[{"name":"message","type":"bytes"}]}</code> · <code>{"enum":[{"name":"Greet","fields":[{"name":"msg","type":"string"}]}]}</code>'
                         }
                         TextField {
@@ -327,7 +372,7 @@ Item {
                             maximumLength: 32
                             font.pixelSize: 13
                             placeholderText: "program name alias (optional) - e.g. my_token"
-                            background: Rectangle { color: ZT.pal.panel; radius: 6; border.width: 1; border.color: ZT.pal.line2 }
+                            background: Rectangle { color: ZTheme.panel; radius: 6; border.width: 1; border.color: ZTheme.line2 }
                         }
                         TextArea {
                             id: schemaInput
@@ -335,20 +380,20 @@ Item {
                             font.pixelSize: 12; font.family: "ui-monospace, Menlo, Consolas, monospace"
                             wrapMode: TextArea.WrapAnywhere
                             placeholderText: '{"struct":[{"name":"message","type":"bytes"}]}'
-                            background: Rectangle { color: ZT.pal.panel; radius: 6; border.width: 1; border.color: ZT.pal.line2 }
+                            background: Rectangle { color: ZTheme.panel; radius: 6; border.width: 1; border.color: ZTheme.line2 }
                         }
                         Row {
                             width: parent.width; spacing: 8
                             Button {
                                 text: "Preview"; onClicked: page.doPreview()
-                                contentItem: Text { text: "Preview"; color: ZT.pal.muted; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                background: Rectangle { color: "#ffffff"; radius: 7; border.width: 1; border.color: ZT.pal.line2 }
+                                contentItem: Text { text: "Preview"; color: ZTheme.muted; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: ZTheme.btnA; radius: 7; border.width: 1; border.color: ZTheme.line2 }
                                 padding: 6; leftPadding: 11; rightPadding: 11
                             }
                             Button {
                                 text: "Validate & submit"; onClicked: page.doSubmit()
-                                contentItem: Text { text: "Validate & submit"; color: ZT.pal.fg; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                background: Rectangle { color: "#ececef"; radius: 7; border.width: 1; border.color: ZT.pal.fg }
+                                contentItem: Text { text: "Validate & submit"; color: ZTheme.fg; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: ZTheme.ctrlSel; radius: 7; border.width: 1; border.color: ZTheme.fg }
                                 padding: 6; leftPadding: 11; rightPadding: 11
                             }
                             RichLabel { explorer: page.explorer; visible: page.schemaMsgHtml.length > 0
@@ -364,7 +409,7 @@ Item {
             // ── transactions feed ──
             Rectangle {
                 width: parent.width; height: Math.max(360, page.height - 240)
-                color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
                     anchors.fill: parent
                     Phead { title: "Transactions" }

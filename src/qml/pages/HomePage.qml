@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components"
+import "../theme"
 import "../theme.js" as ZT
 
 // Home dashboard (renderHome): 4 stat cards (finality-lag sparkline) + a two-panel
@@ -128,9 +129,26 @@ Item {
         var solo = explorer.soloChannel();
         var add = [];
         var txs = backend.txs;
+        // `backend.txs` is a WINDOW over the feed (~150 rows, tens of hours deep), not "what
+        // arrived since the last poll". Only its head is actually newer than this list, so only
+        // the head may be prepended: a row OLDER than the current top belongs further down and is
+        // the paginator's job. Prepending it stacks old rows above new ones and leaves `rows`
+        // unsorted.
+        //
+        // That is not hypothetical. resetFeed() empties the list and issues page 1, and which of
+        // page 1 / the next poll lands first decides the outcome:
+        //   * at startup the poll wins, `rows` is still empty, and the whole window prepends in
+        //     order - correct, which is why this never showed on a cold open;
+        //   * after applyNode() the page wins (the poller was just re-baselined, so its next tick
+        //     is further away), `rows` holds only the newest 50, and every older row in the window
+        //     went on top of them - 100 rows reaching 62h back stacked above the newest 50,
+        //     leaving the feed showing day-old transactions with a single seam at index 100.
+        // A skipped row must NOT be marked `seen`, or pagination could never reach it either.
+        var headTs = page.rows.length ? page.rows[0].timestamp : null;
         for (var i = 0; i < txs.length; i++) {
             var t = txs[i], key = ZT.rowKey(t);
             if (page.seen[key]) continue;
+            if (headTs !== null && t.timestamp < headTs) continue;
             if (solo && t.channel !== solo) continue;
             if (!ZT.filterMatches(t)) continue;
             if (!ZT.clockOk(t)) continue;
@@ -194,7 +212,7 @@ Item {
                 // Zones panel
                 Rectangle {
                     width: panels.zonesW; height: page.narrow ? 420 : panels.panelH
-                    color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                    color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                     Column {
                         anchors.fill: parent
                         Phead {
@@ -205,10 +223,10 @@ Item {
                                 delegate: Rectangle {
                                     required property var modelData
                                     height: 24; width: segTxt.implicitWidth + 18; radius: 7
-                                    color: page.zoneFilter === modelData.v ? "#ececef" : "#ffffff"
-                                    border.width: 1; border.color: page.zoneFilter === modelData.v ? ZT.pal.fg : ZT.pal.line2
+                                    color: page.zoneFilter === modelData.v ? ZTheme.ctrlSel : ZTheme.ctrlA
+                                    border.width: 1; border.color: page.zoneFilter === modelData.v ? ZTheme.fg : ZTheme.line2
                                     Text { id: segTxt; anchors.centerIn: parent; text: modelData.t; font.pixelSize: 12
-                                        color: page.zoneFilter === modelData.v ? ZT.pal.fg : ZT.pal.muted }
+                                        color: page.zoneFilter === modelData.v ? ZTheme.fg : ZTheme.muted }
                                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.zoneFilter = modelData.v }
                                 }
                             }
@@ -221,14 +239,14 @@ Item {
                             Rectangle {
                                 x: 12; anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - 24; height: 28; radius: 7
-                                color: page.showLocal ? ZT.pal.fg : "transparent"
+                                color: page.showLocal ? ZTheme.fg : "transparent"
                                 border.width: 1
-                                border.color: page.showLocal ? ZT.pal.fg
-                                              : (local.status === "ok" ? ZT.pal.green : ZT.pal.line2)
+                                border.color: page.showLocal ? ZTheme.fg
+                                              : (local.status === "ok" ? ZTheme.green : ZTheme.line2)
                                 Text {
                                     anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
-                                    color: page.showLocal ? ZT.pal.panel
-                                           : (local.status === "ok" ? ZT.pal.green : ZT.pal.muted)
+                                    color: page.showLocal ? ZTheme.panel
+                                           : (local.status === "ok" ? ZTheme.green : ZTheme.muted)
                                     text: local.status === "ok" ? "Local sequencer · connected"
                                                                 : "Add your local sequencer"
                                 }
@@ -274,20 +292,20 @@ Item {
                                 text: (page.state && page.state.discovering) ? "scanning the L1 for sequencers…"
                                       : (page.zoneFilter === "data" ? "no data channels found"
                                          : (page.zoneFilter === "rc" ? "no sequencer zones found" : "no sequencers found"))
-                                color: ZT.pal.soft; font.pixelSize: 13 }
+                                color: ZTheme.soft; font.pixelSize: 13 }
                         }
                     }
                 }
                 // Latest Transactions panel
                 Rectangle {
                     width: panels.feedW; height: panels.panelH
-                    color: ZT.pal.panel; radius: 12; border.width: 1; border.color: ZT.pal.line; clip: true
+                    color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                     Column {
                         anchors.fill: parent
                         Phead {
                             title: "Latest Transactions"
                             Text { visible: !!(page.state && page.state.skip_clock); text: "clock ticks not indexed"
-                                color: ZT.pal.muted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                                color: ZTheme.muted; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                         }
                         // source switch: the tracked network, or the local zone. Only shown
                         // once a local zone is connected, since an empty tab is a dead end.
@@ -300,12 +318,12 @@ Item {
                                     required property var modelData
                                     anchors.verticalCenter: parent.verticalCenter
                                     height: 24; width: ftTxt.implicitWidth + 20; radius: 6
-                                    color: page.feedTab === modelData.v ? ZT.pal.fg : ZT.pal.panel
+                                    color: page.feedTab === modelData.v ? ZTheme.fg : ZTheme.panel
                                     border.width: 1
-                                    border.color: page.feedTab === modelData.v ? ZT.pal.fg : ZT.pal.line
+                                    border.color: page.feedTab === modelData.v ? ZTheme.fg : ZTheme.line
                                     Text { id: ftTxt; anchors.centerIn: parent; text: modelData.t
                                         font.pixelSize: 12; font.bold: true
-                                        color: page.feedTab === modelData.v ? ZT.pal.panel : ZT.pal.muted }
+                                        color: page.feedTab === modelData.v ? ZTheme.panel : ZTheme.muted }
                                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                         onClicked: page.feedTab = modelData.v }
                                 }
@@ -316,17 +334,17 @@ Item {
                         // from an empty chain, with no way to ask again.
                         Rectangle {
                             width: parent.width; height: page.feedError !== "" && page.feedTab !== "local" ? 34 : 0
-                            visible: height > 0; color: "#fdece8"
+                            visible: height > 0; color: ZTheme.warnBg
                             Row {
                                 anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
                                           leftMargin: 16; rightMargin: 16 }
                                 spacing: 10
                                 Text { text: "Couldn't load transactions: " + page.feedError
-                                    color: "#8c2d1c"; font.pixelSize: 11; elide: Text.ElideRight
+                                    color: ZTheme.warnFg; font.pixelSize: 11; elide: Text.ElideRight
                                     width: parent.width - 70; anchors.verticalCenter: parent.verticalCenter }
-                                Rectangle { width: 56; height: 22; radius: 6; color: "#ffffff"; border.width: 1; border.color: "#e0b4a8"
+                                Rectangle { width: 56; height: 22; radius: 6; color: ZTheme.warnBtnBg; border.width: 1; border.color: ZTheme.warnBd
                                     anchors.verticalCenter: parent.verticalCenter
-                                    Text { anchors.centerIn: parent; text: "Retry"; color: "#8c2d1c"; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                    Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.warnFg; font.pixelSize: 11; font.weight: Font.DemiBold }
                                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.retryFeed() } }
                             }
                         }

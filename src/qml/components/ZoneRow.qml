@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../theme"
 import "../theme.js" as ZT
 
 // .srow — one zone/sequencer row (mirrors renderSeqs): status dot, title
@@ -21,15 +22,15 @@ Rectangle {
 
     implicitHeight: body.implicitHeight + 22
     height: implicitHeight
-    color: mouse.containsMouse || root.activeFocus ? ZT.pal.rowHover : (root.selected ? ZT.pal.rowSel : "transparent")
-    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZT.pal.line }
+    color: mouse.containsMouse || root.activeFocus ? ZTheme.rowHover : (root.selected ? ZTheme.rowSel : "transparent")
+    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: ZTheme.line }
 
     readonly property bool alive: !!root.seq.alive
     readonly property string shortHex: root.seq.channel_short || ZT.sh(root.seq.channel || "", 8, 4)
     readonly property var cons: ZT.consBadge(root.seq)
     readonly property var act: ZT.activityChip(root.seq)
     readonly property var settle: ZT.settleBadge(root.seq)
-    readonly property var verC: ZT.verBadge[root.seq.version] || ({ bg: "#eef0f4", fg: ZT.pal.soft })
+    readonly property var verC: ZTheme.verBadge[root.seq.version] || ZTheme.verUnknown
 
     MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
         onClicked: { root.forceActiveFocus(); root.clicked(); } }
@@ -40,7 +41,7 @@ Rectangle {
         if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Space) { root.clicked(); e.accepted = true; }
     }
     Rectangle { visible: root.activeFocus; anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        width: 2; color: ZT.pal.link }
+        width: 2; color: ZTheme.link }
 
     RowLayout {
         id: body
@@ -50,7 +51,7 @@ Rectangle {
 
         Rectangle { Layout.alignment: Qt.AlignVCenter
             implicitWidth: 8; implicitHeight: 8; radius: 4
-            color: root.alive ? ZT.pal.green : ZT.pal.silver }
+            color: root.alive ? ZTheme.green : ZTheme.silver }
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -63,15 +64,15 @@ Rectangle {
                     Layout.fillWidth: true                    // takes what the badges leave
                     elide: Text.ElideRight
                     text: ZT.zoneTitle(root.seq)
-                    color: ZT.pal.link; font.pixelSize: 13
+                    color: ZTheme.link; font.pixelSize: 13
                     font.family: "ui-monospace, Menlo, Consolas, monospace"
                 }
                 Rectangle {                                    // .v-data
                     visible: ZT.dataBadge(root.seq)
                     Layout.alignment: Qt.AlignVCenter
                     implicitWidth: dl.implicitWidth + 12; implicitHeight: dl.implicitHeight + 2; radius: 5
-                    color: ZT.verBadge.data.bg
-                    Text { id: dl; anchors.centerIn: parent; text: "DATA"; color: ZT.verBadge.data.fg
+                    color: ZTheme.verBadge.data.bg
+                    Text { id: dl; anchors.centerIn: parent; text: "DATA"; color: ZTheme.verBadge.data.fg
                         font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.3 }
                 }
                 Rectangle {                                    // version, badge only
@@ -96,7 +97,7 @@ Rectangle {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                     text: root.cons ? root.cons.text : ""
-                    color: root.cons && root.cons.ok ? ZT.pal.green : ZT.pal.red
+                    color: root.cons && root.cons.ok ? ZTheme.green : ZTheme.red
                     font.pixelSize: 11; font.weight: Font.Bold
                     ToolTip.visible: hh.hovered && !!root.cons
                     ToolTip.text: root.cons ? root.cons.title : ""
@@ -114,7 +115,7 @@ Rectangle {
                     color: root.settle ? root.settle.bg : "transparent"
                     Text { id: setL; anchors.centerIn: parent
                         text: root.settle ? root.settle.text : ""
-                        color: root.settle ? root.settle.fg : ZT.pal.soft
+                        color: root.settle ? root.settle.fg : ZTheme.soft
                         font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.2 }
                     ToolTip.visible: sh2.hovered && !!root.settle
                     ToolTip.text: root.settle ? root.settle.title : ""
@@ -125,10 +126,10 @@ Rectangle {
             // channel id
             RowLayout {
                 Layout.fillWidth: true; spacing: 5
-                Text { text: "CHANNEL ID"; color: ZT.pal.soft
+                Text { text: "CHANNEL ID"; color: ZTheme.soft
                     font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.3 }
                 Text { Layout.fillWidth: true; elide: Text.ElideRight
-                    text: root.shortHex; color: ZT.pal.soft; font.pixelSize: 11
+                    text: root.shortHex; color: ZTheme.soft; font.pixelSize: 11
                     font.family: "ui-monospace, Menlo, Consolas, monospace" }
             }
 
@@ -138,7 +139,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    color: ZT.pal.muted; font.pixelSize: 11
+                    color: ZTheme.muted; font.pixelSize: 11
                     text: {
                         var s = root.seq;
                         var line = "L2 " + ZT.l2Tip(s) + " · L1 bal " + (s.l1_balance != null ? ZT.num(s.l1_balance) : "-")
@@ -152,7 +153,7 @@ Rectangle {
                     id: actChip
                     visible: !!root.act
                     Layout.alignment: Qt.AlignVCenter
-                    property var fc: root.act ? ZT.finBadge[root.act.tier] : ZT.finBadge.pend
+                    property var fc: root.act ? ZTheme.finBadge[root.act.tier] : ZTheme.finBadge.pend
                     implicitWidth: acl.implicitWidth + 10; implicitHeight: acl.implicitHeight + 2; radius: 4
                     color: fc.bg
                     Text { id: acl; anchors.centerIn: parent; text: root.act ? root.act.text : ""
@@ -168,10 +169,10 @@ Rectangle {
             id: stStatus
             Layout.alignment: Qt.AlignVCenter
             implicitWidth: stLabel.implicitWidth + 14; implicitHeight: stLabel.implicitHeight + 4; radius: 6
-            color: root.alive ? Qt.rgba(19/255, 169/255, 123/255, 0.12) : "#eef0f4"
+            color: root.alive ? ZTheme.aliveChip : ZTheme.idleBg
             Text { id: stLabel; anchors.centerIn: parent
                 text: root.alive ? "ALIVE" : "IDLE"
-                color: root.alive ? ZT.pal.green : ZT.pal.soft
+                color: root.alive ? ZTheme.green : ZTheme.soft
                 font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.4 }
         }
     }

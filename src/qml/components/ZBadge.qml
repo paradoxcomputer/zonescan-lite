@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Controls   // ToolTip
+import "../theme"
 
 // Small pill badge (mirrors .badge / .b-ty-* / .b-vis-* / .fbadge / .vbadge).
 Rectangle {
     id: root
     property string text: ""
-    property color bg: "#f1f1f3"
-    property color fg: "#52525b"
-    property color bd: "#e0e0e4"
+    property color bg: ZTheme.bdgGreyBg
+    property color fg: ZTheme.bdgGreyFg
+    property color bd: ZTheme.bdgGreyBd
     property bool italic: false          // for the ≈guess span
     property int fontPx: 11
     property string tip: ""              // hover text; the web renders this as title=

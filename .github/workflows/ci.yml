@@ -53,16 +53,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - name: qmllint
-        # Syntax + structure only. Type resolution needs the Basecamp host's QML modules,
-        # which aren't present here, so import warnings are expected and not fatal.
+        # Syntax + structure only for most of the tree: type resolution needs the Basecamp
+        # host's QML modules, which aren't present here, so import warnings are expected.
+        # src/qml/theme/ is held to a stricter gate — see the comment in the Justfile.
         run: |
           nix shell nixpkgs#qt6.qtdeclarative -c bash -euo pipefail -c '
-            qmldir=$(dirname $(dirname $(dirname $(readlink -f $(command -v qmllint)))))/lib/qt-6/qml
+            # dirname TWICE: qmllint is at <qtdeclarative>/bin/qmllint and the QML modules at
+            # <qtdeclarative>/lib/qt-6/qml. A third dirname yielded /nix/store, so QtQuick was
+            # unimportable and every rule needing a resolved type reported nothing.
+            qmldir=$(dirname $(dirname $(readlink -f $(command -v qmllint))))/lib/qt-6/qml
             fail=0
-            for f in src/qml/Main.qml src/qml/pages/*.qml src/qml/components/*.qml; do
+            for f in src/qml/Main.qml src/qml/pages/*.qml src/qml/components/*.qml src/qml/theme/*.qml; do
               out=$(qmllint -I "$qmldir" -I src/qml "$f" 2>&1 || true)
               if echo "$out" | grep -qE "\[syntax\]"; then
                 echo "::error file=$f::qmllint syntax error"; echo "$out" | grep -E "\[syntax\]"; fail=1
+              fi
+            done
+            # A Settings or Loader written as a BARE CHILD of QtObject does not warn at runtime:
+            # it fails the document at LOAD time and takes all 24 importers down with it.
+            # qmllint reports that as [missing-property], so it is an error in this directory.
+            # Two allowlisted patterns, both cosmetic and both verified correct at runtime:
+            # QQmlSettings (qmllint cannot see properties declared inside a Settings block) and
+            # Logos.Theme (HostThemeProbe is MEANT to fail that import outside Basecamp; the
+            # Loader in ZTheme.qml is what contains it).
+            for f in src/qml/theme/*.qml; do
+              out=$(qmllint -I "$qmldir" -I src/qml "$f" 2>&1 || true)
+              bad=$(echo "$out" | grep -E "\[(missing-property|import)\]" \
+                    | grep -v "QQmlSettings" | grep -v "Logos.Theme" || true)
+              if [ -n "$bad" ]; then
+                echo "::error file=$f::qmllint structural error"; echo "$bad"; fail=1
               fi
             done
             exit $fail

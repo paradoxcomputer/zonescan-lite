@@ -3,6 +3,71 @@
 All notable changes to ZoneScan Lite. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `metadata.json`.
 
+## [0.3.2] — 2026-08-30
+
+Dark mode, and a feed bug found while testing it.
+
+### Added
+
+- **Dark mode, with an Auto / Light / Dark control in Settings.** The palette is a `ZTheme`
+  singleton (`src/qml/theme/`), so all 335 colour bindings repaint live — including in the ten
+  files that have no back-reference to the root and previously had no way to be told anything.
+  `theme.js` keeps the palette *values*, so its 1:1 correspondence with the website's `:root`
+  survives; the singleton only adds the observability QML needs.
+
+  A `.pragma library` is invisible to QML's binding engine, so mutating `pal` repaints nothing —
+  the singleton is the mechanism that works, not a preference. Two variants were tried and
+  measured first: reading a host QObject through an imported-JS function does **not** create a
+  dependency, and a getter cannot be exported from a `.pragma library` at all.
+
+  **Light renders byte-identically to 0.3.1.** Dark meets or beats every light contrast pairing
+  it was measured against, and the dark palette is the same token set the website carries, value
+  for value.
+
+- `Auto` follows the Basecamp shell via `Logos.Theme`. The import is confined to
+  `HostThemeProbe.qml` behind a `Loader`, because `import Logos.Theme` is *fatal* where the
+  module is absent — it fails the document rather than warning, which would take the app down
+  under `just run`, `qmllint` and both test suites. Contained, it degrades to a settings read.
+
+- `icons/logo-light.png` — the mark is near-black on transparency and disappears on a dark
+  topbar. QML's `Image` has no colour filter and `Qt5Compat.GraphicalEffects` is not in the
+  runtime closure, so a second raster is shipped: same alpha channel, ink replaced.
+
+### Fixed
+
+- **Re-applying the node URL made the newest transactions vanish and left the feed showing
+  day-old ones.** `prependLive()` treated `backend.txs` as "what just arrived", but it is a
+  ~150-row window reaching tens of hours back. After `resetFeed()`, whichever of the first page
+  or the next poll landed first decided the outcome: at startup the poll wins while the list is
+  empty and everything orders correctly, which is why this never showed on a cold open; but
+  after `applyNode()` the page wins, so every older row in the window was prepended *above* the
+  newest 50. Observed as exactly one discontinuity at index 100, 62.8h → 0.1h. Only rows newer
+  than the current head are prepended now, and a skipped row is not marked seen, so pagination
+  can still reach it. Predates dark mode — confirmed by reproducing it on 0.3.1.
+
+- `RichLabel` hardcoded its ink and link colour and imported no theme at all, which made it the
+  default colour for every HTML fragment in the app. `ZBadge` likewise carried three hardcoded
+  defaults, and `Sparkline` only repainted on data change, so an idle chart held a stale stroke.
+
+### Changed
+
+- **Appearance defaults to Light**, not to following the host. The Logos design system ships
+  only a dark theme, so `Auto` would have opened every fresh install dark and the light palette
+  this app is built around would never be seen unless someone went looking for the picker.
+  `Auto` remains one click away. A preference already saved on disk still wins over this default.
+
+- The ~26 stock `QtQuick.Controls` (ScrollBars, ComboBoxes, CheckBoxes, BusyIndicators, the
+  fields) paint from `palette`, which the app previously never set — they would have stayed light
+  inside a dark window. The light column is the Basic style's own default palette copied back
+  verbatim, so declaring it changes nothing in light. Note this works only while the host
+  installs the Basic style; Material and Universal largely ignore `palette`.
+
+- `just lint` derived its Qt import path with one `dirname` too many, yielding `/nix/store`.
+  QtQuick was therefore unimportable and the gate had only ever been able to report `[syntax]`.
+  Fixed here and in CI, and `src/qml/theme/` is now held to a stricter gate: a `Settings` or
+  `Loader` written as a bare child of `QtObject` fails the document at load time rather than
+  warning, and would take every importer with it.
+
 ## [0.3.1] — 2026-08-25
 
 ### Fixed

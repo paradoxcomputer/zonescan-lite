@@ -1,4 +1,5 @@
 import QtQuick
+import "../theme"
 
 // Renders an HTML fragment produced by theme.js (instrText / txAction / decode /
 // chanLabel …) as QML rich text. Links use a compact scheme —
@@ -14,10 +15,10 @@ Text {
     property var explorer: null
     textFormat: Text.RichText
     wrapMode: Text.WordWrap
-    color: "#18181b"
+    color: ZTheme.fg
     font.pixelSize: 13
     font.family: "-apple-system, Segoe UI, Roboto, sans-serif"
-    linkColor: "#27272a"
+    linkColor: ZTheme.link
     onLinkActivated: function (url) { if (root.explorer) root.explorer.routeLink(url); }
 
     // show a pointing hand over links

@@ -21,7 +21,7 @@ steps:
       # QQuickItem's FINAL `z` and never loaded in any build; the old Loader showed an empty
       # rectangle instead of saying so.
       state: "root.pageError === '' && root.navType === 'home'"
-      text: ["v0.3.1", "Latest Transactions", "Zones"]
+      text: ["v0.3.2", "Latest Transactions", "Zones"]
 
   - name: the zones list shows settling state
     # `settling` is three-state (true / false / null) and was never rendered by the port at

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import "../theme"
 import "../theme.js" as ZT
 
 // "Add your local sequencer": reads a sequencer running on the USER's machine and shows it
@@ -189,19 +190,19 @@ Rectangle {
 
         Text {
             text: "SEQUENCER ADDRESS"; font.pixelSize: 11; font.bold: true
-            font.letterSpacing: 0.5; color: ZT.pal.soft
+            font.letterSpacing: 0.5; color: ZTheme.soft
         }
         Row {
             width: parent.width; spacing: 8
             Rectangle {
                 width: parent.width - connectBtn.width - 8; height: 32; radius: 6
-                color: ZT.pal.bg; border.width: 1; border.color: ZT.pal.line
+                color: ZTheme.bg; border.width: 1; border.color: ZTheme.line
                 TextInput {
                     id: urlField
                     anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9
                     verticalAlignment: TextInput.AlignVCenter
                     text: root.url; font.family: "monospace"; font.pixelSize: 12
-                    color: ZT.pal.fg; clip: true; selectByMouse: true
+                    color: ZTheme.fg; clip: true; selectByMouse: true
                     enabled: root.status !== "reading"
                     onAccepted: root.connectLocal()
                 }
@@ -209,12 +210,12 @@ Rectangle {
             Rectangle {
                 id: connectBtn
                 width: btnTxt.implicitWidth + 26; height: 32; radius: 6
-                color: root.status === "ok" ? "#fef3f2" : ZT.pal.fg
-                border.width: 1; border.color: root.status === "ok" ? "#fecdca" : ZT.pal.fg
+                color: root.status === "ok" ? ZTheme.dangerBg : ZTheme.fg
+                border.width: 1; border.color: root.status === "ok" ? ZTheme.dangerBd : ZTheme.fg
                 opacity: root.status === "reading" ? 0.6 : 1
                 Text {
                     id: btnTxt; anchors.centerIn: parent; font.pixelSize: 12; font.bold: true
-                    color: root.status === "ok" ? "#b42318" : ZT.pal.panel
+                    color: root.status === "ok" ? ZTheme.dangerFg : ZTheme.panel
                     text: root.status === "ok" ? "Disconnect"
                           : (root.status === "reading" ? "Cancel" : "Connect")
                 }
@@ -232,31 +233,31 @@ Rectangle {
         }
         Rectangle {
             width: parent.width; height: noteCol.implicitHeight + 18; radius: 7
-            color: ZT.pal.bg; border.width: 1; border.color: ZT.pal.line
+            color: ZTheme.bg; border.width: 1; border.color: ZTheme.line
             Column {
                 id: noteCol
                 x: 11; y: 9; width: parent.width - 22; spacing: 6
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 11
-                    color: ZT.pal.muted; lineHeight: 1.35
+                    color: ZTheme.muted; lineHeight: 1.35
                     text: "Reads a sequencer on your own machine. Only the encoded blocks are sent to the zonescan server, to be decoded; nothing about your chain is stored."
                 }
             }
         }
         Text {
             visible: root.status === "error"; width: parent.width; wrapMode: Text.WordWrap
-            text: root.errorText; color: "#b42318"; font.pixelSize: 12
+            text: root.errorText; color: ZTheme.dangerFg; font.pixelSize: 12
         }
         Text {
             visible: root.status === "reading"
             text: root.scanned > 0
                   ? ("reading blocks… " + ZT.num(root.scanned) + " scanned · Cancel to stop")
                   : "contacting the sequencer…"
-            color: ZT.pal.muted; font.pixelSize: 12
+            color: ZTheme.muted; font.pixelSize: 12
         }
         Text {
             visible: root.status === "ok"; width: parent.width; wrapMode: Text.WordWrap
-            font.pixelSize: 12; color: ZT.pal.muted
+            font.pixelSize: 12; color: ZTheme.muted
             text: "connected · tip #" + ZT.num(root.tip)
                   + " · scanned " + (root.reachedGenesis ? "whole chain" : ZT.num(root.scanned) + " blocks back")
                   + " · " + ZT.num(root.txs.length) + " tx(s)"

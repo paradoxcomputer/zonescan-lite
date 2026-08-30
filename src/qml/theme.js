@@ -7,7 +7,7 @@
 .pragma library
 
 // ── design tokens (:root) ────────────────────────────────────────────────────
-var pal = {
+var lightPal = {
     bg:    "#f4f4f5", panel: "#ffffff", panel2: "#f4f4f5",
     line:  "#e6e6e9", line2: "#d4d4da",
     fg:    "#18181b", muted: "#6e6e77", soft: "#9b9ba4",
@@ -17,11 +17,19 @@ var pal = {
     rowHover: "#f7f9fd", rowSel: "#eef4ff",
     theadBg:  "#fbfcfe",
     // .htag best-guess tag
-    htagFg: "#9a6a00", htagBg: "#fff7e6", htagBd: "#ffe2a8"
+    htagFg: "#9a6a00", htagBg: "#fff7e6", htagBd: "#ffe2a8",
+    // dimmed guess ink: the low-confidence branch of guessHtml() used to freeze this hex
+    // inline, so it could never follow the palette.
+    mutedDim: "#8f8f98",
+    // "not settling" pill. Deliberately its OWN pair rather than htag*: identical values
+    // today, but it is a severity encoding (degraded), not a best-guess tag, and the two
+    // must be free to diverge. (The web calls this .v-nosettle and already uses different
+    // values - realigning them CHANGES light rendering, so it is held back.)
+    nosettleBg: "#fff7e6", nosettleFg: "#9a6a00"
 };
 
 // Type-badge palette (.b-ty-*): { bg, fg, bd }. 1:1 with the CSS.
-var tyBadge = {
+var lightTy = {
     token:                   { bg:"#dcfce7", fg:"#166534", bd:"#bbf7d0" },
     authenticated_transfer:  { bg:"#e0f2fe", fg:"#075985", bd:"#bae6fd" },
     clock:                   { bg:"#f4f4f5", fg:"#71717a", bd:"#e4e4e7" },
@@ -35,9 +43,11 @@ var tyBadge = {
     deploy:                  { bg:"#ffedd5", fg:"#c2410c", bd:"#fdba74" },
     raw:                     { bg:"#fef9c3", fg:"#854d0e", bd:"#fde68a" },
     other:                   { bg:"#f1f1f3", fg:"#52525b", bd:"#e0e0e4" },
-    guess:                   { bg:"#f8fafc", fg:"#6e6e77", bd:"#d4d4da" }
+    // bd is line2, not a copy of it - the guess chip is deliberately the lowest-contrast
+    // chip of the family and borrows the plain hairline.
+    guess:                   { bg:"#f8fafc", fg:"#6e6e77", bd: lightPal.line2 }
 };
-var visBadge = {
+var lightVis = {
     public:  { bg:"#ffffff", fg:"#18181b", bd:"#d4d4d8" },
     private: { bg:"#000000", fg:"#ffffff", bd:"#000000" },
     raw:     { bg:"#fffbeb", fg:"#854d0e", bd:"#fde68a" }
@@ -47,17 +57,63 @@ var visBadge = {
 // BLACK - so every "final" and "on L1 · finalizing" pill rendered as a black box.
 //   rgba(19,169,123,.14) -> alpha .14*255 = 36 = 0x24 -> #2413a97b
 //   rgba(37,99,235,.12)  -> alpha .12*255 = 31 = 0x1f -> #1f2563eb
-var finBadge = {
-    fin:  { label:"final",              bg:"#2413a97b", fg:"#3d8c40" },
+var lightFin = {
+    fin:  { label:"final",              bg:"#2413a97b", fg: lightPal.green },
     safe: { label:"on L1 · finalizing", bg:"#1f2563eb", fg:"#1d4ed8" },
     pend: { label:"pending",            bg:"#eef0f3",   fg:"#6b7280" }
 };
-var verBadge = {
+var lightVer = {
     rc5:  { bg:"#e0e7ff", fg:"#3730a3" },
     rc4:  { bg:"#dcfce7", fg:"#166534" },
     rc3:  { bg:"#fef3c7", fg:"#92400e" },
     data: { bg:"#fef9c3", fg:"#854d0e" }   // .v-data raw data channel
 };
+// ── the live token objects ───────────────────────────────────────────────────
+// Everything downstream reads THESE - `pal.muted`, `tyBadge.guess.bg`, `finBadge[k].bg` - and
+// reads them at call time. applyPalette() therefore replaces their CONTENTS in place; it never
+// reassigns them. That distinction is load-bearing: `pal` is captured by module scope here and
+// by 300-odd `ZT.pal.*` sites in QML, and a reassignment would leave every one of those looking
+// at the old object. Nothing anywhere aliases these objects (verified), so in-place is safe.
+var pal = {};
+var tyBadge = {};
+var visBadge = {};
+var finBadge = {};
+var verBadge = {};
+
+// Copy a whole palette in place. `pal` is flat; the four badge maps are one level of nesting,
+// so their entries are merged key-by-key rather than swapped, keeping any entry object a caller
+// grabbed earlier (e.g. `var fc = ZT.finBadge[tier]`) pointing at live values.
+//
+// NOTE this is only the DATA half of a theme flip. A `.pragma library` is invisible to QML's
+// binding engine, so mutating these objects repaints nothing on its own - the QML side has to
+// re-evaluate. Push here FIRST, then notify.
+function applyPalette(p, ty, vis, fin, ver) {
+    _copyInto(pal, p);
+    _copyMapInto(tyBadge, ty);
+    _copyMapInto(visBadge, vis);
+    _copyMapInto(finBadge, fin);
+    _copyMapInto(verBadge, ver);
+}
+function _copyInto(dst, src) {
+    if (!src) return;
+    for (var k in src) dst[k] = src[k];
+}
+function _copyMapInto(dst, src) {
+    if (!src) return;
+    for (var k in src) {
+        var v = src[k];
+        if (v !== null && typeof v === "object") {
+            if (!dst[k] || typeof dst[k] !== "object") dst[k] = {};
+            _copyInto(dst[k], v);
+        } else {
+            dst[k] = v;
+        }
+    }
+}
+// Light is the boot palette: theme.js is imported (and its first bindings evaluated) before
+// anything can choose a mode, so the live objects must never be observed empty.
+applyPalette(lightPal, lightTy, lightVis, lightFin, lightVer);
+
 function tyOf(name) { return tyBadge[name] || tyBadge.other; }
 function visOf(kind) { return visBadge[kind] || visBadge.public; }
 
@@ -186,7 +242,7 @@ function guessTip(g) {
 // uses a dotted underline; QML RichText only does solid, so we approximate with underline).
 function guessHtml(g) {
     var loOpacity = (g.confidence || 0) < 0.6 ? 0.75 : 1.0;
-    var col = loOpacity < 1 ? "#8f8f98" : pal.muted;
+    var col = loOpacity < 1 ? pal.mutedDim : pal.muted;
     return '<span style="color:' + col + ';font-style:italic;text-decoration:underline">'
          + '<span style="font-style:normal;text-decoration:none">≈</span> ' + esc(g.name) + '</span>';
 }
@@ -534,7 +590,7 @@ function settleBadge(s) {
     if (s.settling)
         return { text: "settling", ok: true, bg: finBadge.fin.bg, fg: finBadge.fin.fg,
                  title: "inscribing blocks onto the L1" + last };
-    return { text: "not settling", ok: false, bg: pal.htagBg, fg: pal.htagFg,
+    return { text: "not settling", ok: false, bg: pal.nosettleBg, fg: pal.nosettleFg,
              title: "not inscribing onto the L1 at the moment" + last };
 }
 // Long form for the zone page's detail grid.
