@@ -63,7 +63,7 @@ Rectangle {
                 if (!res.ok) { onErr(res.error || "no result"); return; }
                 onOk(res.result);
             },
-            function () { onErr("request failed"); });
+            function (e) { onErr(e || "request failed"); });
     }
 
     // Walk backwards until enough real transactions are in hand. A sequencer mints a block on

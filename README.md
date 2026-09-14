@@ -102,14 +102,31 @@ timeout render as an empty chain.
 
 In QML every SLOT returns a **pending token**, not a value. Resolve it through
 `explorer.watch(...)` (which wraps `logos.watch`); reading `.result` off the call directly
-always yields `undefined`.
+always yields `undefined`. `explorer.watch` also fails a call made before the replica is
+ready and any call still unanswered after 45 s — logos.watch and QtRO do neither, and a
+token that never resolves used to freeze whichever loading state was waiting on it.
+
+Pages skip any full reload (their first fetch, a filter change) while `!explorer.ready` and
+rely on `Main.qml` calling their `pageRefresh()` when it flips, the page on screen first; the
+same hook is what the ⟳ icon / Ctrl+R call. Paging and Retry still issue their call and fail
+immediately with "not connected" while not ready.
+
+### Rows from `backend.txs` are references
+
+An element read off the `txs` PROP is a live QML reference to "element k of the list as it is
+now", and so are its nested arrays. Anything kept across a poll must be snapshotted first
+(`ZT.snapshot`); `prependLive()` does. Rows in a call result are plain values.
 
 ### The poll loop
 
 `poll()` runs every 2 s on a **single-shot timer re-armed when it finishes**, and is guarded
 by `m_busy`. Both matter: each blocking request spins a nested `QEventLoop` that keeps
 delivering timer events, so a repeating timer would re-enter `poll()` inside a request that
-is still blocked.
+is still blocked. A tick that lands while a `.rep` slot is executing is deferred until that
+slot returns (`CallGuard`), so a view call's reply is never held behind a poll. `refresh()`
+never runs the poll inline — the slot is dispatched from the socket's `readyRead` handler,
+where a blocking poll would leave every later call unread — it schedules one, and coalesces
+if one is already running.
 
 ## Keyboard
 
@@ -129,7 +146,7 @@ is still blocked.
 
 ```sh
 just test       # tests/  — sandboxed, no network. This is the CI gate.
-just test-app   # drive the REAL app in Basecamp against sitometres.yaml (13 steps)
+just test-app   # drive the REAL app in Basecamp against sitometres.yaml
 just smoke      # crawl the app with no spec
 ```
 

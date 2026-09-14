@@ -84,7 +84,7 @@ Rectangle {
         function onProgramsChanged()  { root._syncRegistry(); }
         function onGuessesChanged()   { root._syncRegistry(); }
         function onSchemasChanged()   { root._syncRegistry(); }
-        function onBaseUrlChanged()   { root._syncRegistry(); }
+        function onBaseUrlChanged()   { root._syncRegistry(); root._nodeSwitched(); }
         function onTxsChanged()       { root.rev = root.rev + 1; }   // live feed tick
         // The contract's error signal. It was declared from the start and never emitted or
         // connected, so every transient failure was silent on both sides.
@@ -92,7 +92,44 @@ Rectangle {
     }
 
     // logos.watch wrapper — resolve a SLOT's pending token.
-    function watch(promise, onOk, onErr) { logos.watch(promise, onOk, onErr); }
+    //
+    // Two ways a reply never comes, both seen in the field, neither reported by logos.watch:
+    //   * the call was issued while the replica had no connection (every cold open: the home
+    //     page's first fetch went out before the QtRO handshake finished, and the pending token
+    //     it got back can never finish - QtRO leaves its error at InvalidMessage forever);
+    //   * the connection dropped, or the backend is wedged, while the call was in flight.
+    // Every loading flag in the app is cleared only inside these callbacks, so either case
+    // froze that surface for the life of the page, with Retry unable to help. Now: a call made
+    // before the replica is ready fails immediately, and every call has a ceiling after which
+    // it fails too. A late reply after the ceiling is dropped; the retry the failure offers
+    // fetches fresh.
+    // The default ceiling covers one blocking request (15 s backend cap) queued behind another;
+    // a caller whose call legitimately takes longer (setNodeUrl probes a node twice) passes its
+    // own, in ms.
+    readonly property int watchTimeoutMs: 45000
+    Component { id: watchTimerComp; Timer { } }
+    function watch(promise, onOk, onErr, timeoutMs) {
+        if (!root.ready) { if (onErr) onErr("not connected to zonescan yet"); return; }
+        var ms = (timeoutMs === undefined || timeoutMs === null) ? root.watchTimeoutMs : timeoutMs;
+        var done = false;
+        var t = watchTimerComp.createObject(root, { interval: ms, running: true });
+        function settle() { if (done) return false; done = true; if (t) { t.stop(); t.destroy(); t = null; } return true; }
+        t.triggered.connect(function () { if (settle() && onErr) onErr("timed out after " + Math.round(ms / 1000) + "s"); });
+        logos.watch(promise,
+                    function (v) { if (settle() && onOk) onOk(v); },
+                    function (e) { if (settle() && onErr) onErr(e); });
+    }
+    // The replica just became usable (cold start, or a reconnect): every cached page holds
+    // either nothing or data from before the gap, so each one re-fetches. Pages skip their own
+    // first fetch while !ready and rely on this instead, which is what closes the cold-open
+    // race described above. The page on screen goes first: the backend answers view calls in
+    // the order they were sent, so anything queued ahead of it would show as a wait.
+    onReadyChanged: if (ready) {
+        var cur = _key(root.nav);
+        root._refreshPage(root.pageCache[cur]);
+        for (var k in root.pageCache) if (k !== cur) root._refreshPage(root.pageCache[k]);
+    }
+    function _refreshPage(it) { if (it && typeof it.pageRefresh === "function") it.pageRefresh(); }
 
     // one sequencer ⇒ the home feed IS that zone's feed.
     function soloChannel() { return root.seqs.length === 1 ? root.seqs[0].channel : null; }
@@ -289,7 +326,7 @@ Rectangle {
                       // 64 lowercase hex, which is why there is no further fallback here.
                       root.navWallet(ZT.hexToB58(h), null);
                   },
-                  function ()  { root.searching = false; root.searchNote = "Search failed: zonescan did not answer."; });
+                  function (e) { root.searching = false; root.searchNote = "Search failed: " + (e || "zonescan did not answer."); });
             return;
         }
         watch(backend.whatIs(v),
@@ -300,7 +337,7 @@ Rectangle {
                   if (r && r.status === 404) { root.searchNote = "Nothing matched \"" + v + "\"."; return; }
                   root.searchNote = "Search failed: " + ((r && r.error) || "zonescan did not answer");
               },
-              function ()  { root.searching = false; root.searchNote = "Search failed: zonescan did not answer."; });
+              function (e) { root.searching = false; root.searchNote = "Search failed: " + (e || "zonescan did not answer."); });
     }
 
     // ── settings: which zonescan node to read from ──────────────────────────
@@ -322,11 +359,35 @@ Rectangle {
         root.pageOrder = [];
     }
 
+    // The node whose data the cached pages hold. The `baseUrl` PROP, not the setNodeUrl reply,
+    // is what says the backend switched: the PROP change precedes the reply, and it still
+    // arrives when the reply is late (a switch can take two 15 s probe attempts behind queued
+    // calls) or lost. Every cached page holds rows fetched from the previous node, and showing
+    // them under the new node's name would attribute one chain's data to another, so the
+    // cache is dropped whole and history collapses back to home.
+    property string shownNode: ""
+    function _nodeSwitched() {
+        var now = backend ? (backend.baseUrl || "") : "";
+        if (now === "") return;
+        if (root.shownNode === "") { root.shownNode = now; return; }   // the initial value, not a switch
+        if (now === root.shownNode) return;
+        root.shownNode = now;
+        root.history = [({ type: "home" })]; root.histIndex = 0; root.nav = root.history[0];
+        root._dropPages(); root._render();
+        root.settingsOpen = false; root.nodeMsg = ""; root.nodeMsgError = false;
+        // With a setNodeUrl call in flight its reply announces the switch (with the zone
+        // count); this toast is for a switch that arrives on its own, e.g. after the ceiling.
+        if (!root.nodeBusy) root.notify("Now reading " + now, false);
+    }
+
     // `url` empty means "forget my choice" and fall back to $ZONESCAN_BASE_URL / the default.
     // The backend probes a candidate first and changes nothing if it fails, so a rejected URL
-    // leaves the app exactly where it was.
+    // leaves the app exactly where it was. The switch itself is applied by _nodeSwitched()
+    // from the PROP; this only drives the panel's messages.
     function applyNode(url) {
+        url = String(url || "").trim();   // the backend decides "reset" on the trimmed value too
         if (!backend || root.nodeBusy) return;
+        var startNode = root.shownNode;
         root.nodeBusy = true; root.nodeMsgError = false;
         root.nodeMsg = url === "" ? "Resetting…"
                                   : ("Checking " + ZT.normalizeNodeUrl(url) + " …");
@@ -340,17 +401,27 @@ Rectangle {
                   }
                   root.nodeMsgError = false;
                   root.nodeMsg = "";
-                  root.history = [({ type: "home" })]; root.histIndex = 0; root.nav = root.history[0];
-                  root._dropPages(); root._render();
                   root.settingsOpen = false;
+                  // A reset onto the node already shown, or re-entering the current node, changes
+                  // no PROP, so the panel is the only thing that can say it worked.
                   root.notify(r.reset ? ("Reset to " + r.url)
                                       : ("Now reading " + r.url + (r.zones !== undefined ? " · " + r.zones + " zones" : "")),
                               false);
               },
-              function () {
-                  root.nodeBusy = false; root.nodeMsgError = true;
-                  root.nodeMsg = "The check did not complete.";
-              });
+              function (e) {
+                  root.nodeBusy = false;
+                  // The PROP may have applied the switch while this reply was late or lost: then
+                  // the check did complete, and saying otherwise over a page already showing
+                  // the new node would be wrong.
+                  if (root.shownNode !== startNode) {
+                      root.nodeMsgError = false; root.nodeMsg = ""; root.settingsOpen = false;
+                      root.notify("Now reading " + root.shownNode, false);
+                      return;
+                  }
+                  root.nodeMsgError = true;
+                  root.nodeMsg = "The check did not complete: " + (e || "no answer");
+              },
+              90000);
     }
 
     function openSettings() {
@@ -366,6 +437,9 @@ Rectangle {
 
     function doRefresh() {
         if (!backend) return;
+        // The page first, the poll second: both go down the same socket in order, so the page's
+        // fetch is answered before the poll's own requests start.
+        root._refreshPage(root.pageCache[_key(root.nav)]);
         backend.refresh();
         root.notify("Refreshing…", false);
     }
@@ -375,6 +449,7 @@ Rectangle {
     Component.onCompleted: {
         root.ready = root.backend !== null && logos.isViewModuleReady("zonescan_lite");
         root._syncRegistry();
+        root._nodeSwitched();   // adopt the node already published, if the PROP is in
         root._render();
         searchInput.forceActiveFocus();
     }

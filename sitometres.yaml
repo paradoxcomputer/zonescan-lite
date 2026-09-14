@@ -21,7 +21,35 @@ steps:
       # QQuickItem's FINAL `z` and never loaded in any build; the old Loader showed an empty
       # rectangle instead of saying so.
       state: "root.pageError === '' && root.navType === 'home'"
-      text: ["v0.3.2", "Latest Transactions", "Zones"]
+      text: ["v0.3.3", "Latest Transactions", "Zones"]
+
+  - name: the home feed's first page request resolves
+    # Regression for the cold-open latch: the first getTxsQuery used to be sent before the
+    # QtRO replica had a connection, its token never resolved, and feedLoading stayed true
+    # for the life of the page (the "loading" footer never cleared, scrolling never paged).
+    # The rows on screen came from the poll window, so text alone could not tell the two
+    # apart; the page's own state can.
+    # `cursor` is written only by a page reply (rows alone can come from the poll window).
+    waitFor:
+      state: >-
+        root.pageCache['home||'].feedLoading === false &&
+        root.pageCache['home||'].cursor !== null &&
+        root.pageCache['home||'].feedError === ''
+    timeout: 30s
+
+  - name: scrolling to the bottom fetches the next page
+    # loadMore() early-returns while feedLoading is set, which is what made the latch above
+    # unrecoverable. Issued directly: the inspector cannot scroll a ListView, and this is the
+    # exact call TxTable's atEnd makes. The cursor is the oracle again: when the poll window
+    # landed first the second page adds no NEW rows (all already seen), but its reply always
+    # moves the cursor. searchNote is borrowed as scratch to remember the old one.
+    eval: "(function(){ var p = root.pageCache['home||']; root.searchNote = p.cursor.hash; p.loadMore(false); return p.feedLoading; })()"
+  - name: the next page arrives
+    waitFor:
+      state: "root.pageCache['home||'].feedLoading === false && root.pageCache['home||'].cursor.hash !== root.searchNote"
+    timeout: 30s
+  - name: clear the scratch note
+    eval: "root.searchNote = ''"
 
   - name: the zones list shows settling state
     # `settling` is three-state (true / false / null) and was never rendered by the port at
@@ -125,11 +153,24 @@ steps:
     expect:
       state: "root.navType === 'home'"
 
-  - name: refresh is reachable from the UI
-    # refresh() was implemented and documented from the start with nothing able to call it.
+  - name: refresh reloads the page you are on
+    # refresh() was implemented and documented from the start with nothing able to call it;
+    # once wired, it only re-polled the state snapshot and never re-fetched the page, so from
+    # the user's seat the click did nothing. It now calls the page's pageRefresh() first
+    # (feedGen advances) and then the poll.
     click: "⟳"
     expect:
-      state: "root.noticeText !== ''"
+      state: "root.noticeText !== '' && root.pageCache['home||'].feedGen >= 2"
+  - name: the reloaded feed resolves
+    # The refresh used to run the whole blocking poll inside the QtRO socket's read handler,
+    # so anything the view asked for next waited for the entire poll. On a healthy node this
+    # is ~1 s; this step's own timeout is what bounds it here.
+    waitFor:
+      state: >-
+        root.pageCache['home||'].feedLoading === false &&
+        root.pageCache['home||'].cursor !== null &&
+        root.pageCache['home||'].feedError === ''
+    timeout: 30s
 
   - name: the type filter dropdown opens
     # Asserted through the app not breaking rather than the popup's contents: the popup's

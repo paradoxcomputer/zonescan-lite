@@ -34,6 +34,7 @@ Item {
     readonly property int pageSize: 50
     readonly property int maxRows: 600
     property int feedGen: 0
+    property int emptyPages: 0   // consecutive page replies that added no row; see loadMore
 
     function baseQuery() {
         var p = ({});
@@ -52,12 +53,13 @@ Item {
         if (filterBar) filterBar.sync();
         if (page.fltSig !== ZT.fltSig()) page.reload();
     }
+    function pageRefresh() { reload(); }
     function reload() {
-        if (!backend) return;
+        if (!backend || !explorer.ready) return;   // re-issued from Main.qml when ready flips
         feedGen++;
         fltSig = ZT.fltSig();
         loaded = false; notFound = false; loadError = ""; acct = null;
-        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({});
+        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({}); emptyPages = 0;
         var gen = page.feedGen;
         explorer.watch(backend.getAccountQuery(accId, qstr(baseQuery())),
             function (a) {
@@ -75,9 +77,9 @@ Item {
                 if (txs.length) { var last = txs[txs.length - 1]; page.cursor = { ts: last.timestamp, block: last.block_id, hash: last.hash, channel: last.channel }; }
                 page.feedDone = txs.length < page.pageSize;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.loaded = true; page.loadError = "the request failed";
+                page.loaded = true; page.loadError = e || "the request failed";
             });
     }
     function retry() { page.reload(); }
@@ -103,10 +105,17 @@ Item {
                 page.rows = page.rows.concat(add);
                 if (list.length) { var last = list[list.length - 1]; page.cursor = { ts: last.timestamp, block: last.block_id, hash: last.hash, channel: last.channel }; }
                 if (list.length < page.pageSize) page.feedDone = true;
+                // A page whose rows were all already on screen (the poll window landed before
+                // page 1, so pages 1-3 are fully "seen") adds nothing, and the scroll position
+                // that asked for it does not move, so nothing would ask for the next one: the
+                // feed only grew after one nudge per empty page. Chain on, bounded by the depth
+                // of the window (three pages), so a server ignoring the cursor cannot loop.
+                if (!add.length && !page.feedDone && page.emptyPages < 3) { page.emptyPages++; page.loadMore(false); }
+                else if (add.length) page.emptyPages = 0;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.feedLoading = false; page.feedError = "the request failed";
+                page.feedLoading = false; page.feedError = e || "the request failed";
             });
     }
     // live prepend from the polled backend.txs (mirrors feedMatches for a wallet:
@@ -116,9 +125,15 @@ Item {
         if (ZT.fltSort() === "oldest") return;   // newest rows do not belong atop an oldest-first list
         var add = [];
         var txs = backend.txs;
+        // Only rows NEWER than the current head belong on top: the window reaches tens of hours
+        // back, so when page 1 lands before a poll every unseen older row would otherwise stack
+        // above the newest 50 (measured: 100 day-old rows over the head within one tick). A
+        // skipped row is not marked seen, so pagination can still reach it. Same rule as Home.
+        var headTs = page.rows.length ? page.rows[0].timestamp : null;
         for (var i = 0; i < txs.length; i++) {
             var t = txs[i], key = ZT.rowKey(t);
             if (page.seen[key]) continue;
+            if (headTs !== null && t.timestamp < headTs) continue;
             if (channel && t.channel !== channel) continue;
             if (((t.accounts) || []).indexOf(accId) < 0) continue;
             // This page mounts a FilterBar and sends filterParams on its fetches, but live rows
@@ -126,7 +141,7 @@ Item {
             // the top within 2 s.
             if (!ZT.filterMatches(t)) continue;
             if (!ZT.clockOk(t)) continue;
-            page.seen[key] = true; add.push(t);
+            page.seen[key] = true; add.push(ZT.snapshot(t));   // a reference into backend.txs, not a value: see ZT.snapshot
         }
         if (add.length) {
             var next = add.concat(page.rows);

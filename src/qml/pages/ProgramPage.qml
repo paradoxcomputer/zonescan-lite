@@ -102,6 +102,7 @@ Item {
     readonly property int pageSize: 50
     readonly property int maxRows: 600
     property int feedGen: 0
+    property int emptyPages: 0   // consecutive page replies that added no row; see loadMore
 
     function buildQuery(cur) {
         var p = { channel: page.channel, program: page.progId, clock: "1", limit: pageSize };
@@ -112,8 +113,9 @@ Item {
         return parts.join("&");
     }
     function resetFeed() {
+        if (!explorer || !explorer.ready) return;   // re-issued from Main.qml when ready flips
         feedGen++;
-        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({});
+        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({}); emptyPages = 0;
         loadMore(true);
     }
     function retryFeed() { feedError = ""; loadMore(true); }
@@ -135,10 +137,17 @@ Item {
                 page.rows = page.rows.concat(add);
                 if (list.length) { var last = list[list.length - 1]; page.cursor = { ts: last.timestamp, block: last.block_id, hash: last.hash, channel: last.channel }; }
                 if (list.length < pageSize) page.feedDone = true;
+                // A page whose rows were all already on screen (the poll window landed before
+                // page 1, so pages 1-3 are fully "seen") adds nothing, and the scroll position
+                // that asked for it does not move, so nothing would ask for the next one: the
+                // feed only grew after one nudge per empty page. Chain on, bounded by the depth
+                // of the window (three pages), so a server ignoring the cursor cannot loop.
+                if (!add.length && !page.feedDone && page.emptyPages < 3) { page.emptyPages++; page.loadMore(false); }
+                else if (add.length) page.emptyPages = 0;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.feedLoading = false; page.feedError = "the request failed";
+                page.feedLoading = false; page.feedError = e || "the request failed";
             });
     }
     function prependLive() {
@@ -148,12 +157,18 @@ Item {
         // Sort would freeze live prepend with nothing on the page able to unfreeze it.
         var add = [];
         var txs = backend.txs;
+        // Only rows NEWER than the current head belong on top: the window reaches tens of hours
+        // back, so when page 1 lands before a poll every unseen older row would otherwise stack
+        // above the newest 50 (measured: 100 day-old rows over the head within one tick). A
+        // skipped row is not marked seen, so pagination can still reach it. Same rule as Home.
+        var headTs = page.rows.length ? page.rows[0].timestamp : null;
         for (var i = 0; i < txs.length; i++) {
             var t = txs[i], key = ZT.rowKey(t);
             if (page.seen[key]) continue;
+            if (headTs !== null && t.timestamp < headTs) continue;
             if (t.channel !== page.channel) continue;
             if (t.program !== page.progId) continue;
-            page.seen[key] = true; add.push(t);
+            page.seen[key] = true; add.push(ZT.snapshot(t));   // a reference into backend.txs, not a value: see ZT.snapshot
         }
         if (add.length) {
             var next = add.concat(page.rows);
@@ -173,8 +188,9 @@ Item {
         }
     }
 
+    function pageRefresh() { reload(); }
     function reload() {
-        if (!backend) return;
+        if (!backend || !explorer.ready) return;   // re-issued from Main.qml when ready flips
         resetFeed();
         txCount = "…";
         // exact per-program total from the indexed /api/program (no scan).
@@ -413,8 +429,27 @@ Item {
                 Column {
                     anchors.fill: parent
                     Phead { title: "Transactions" }
+                    // feed-level failure + retry, as on Home. This page set feedError and defined
+                    // retryFeed() from the start and rendered neither, so a failed page fetch here
+                    // was silent and unrecoverable except by leaving and coming back.
+                    Rectangle {
+                        width: parent.width; height: page.feedError !== "" ? 34 : 0
+                        visible: height > 0; color: ZTheme.warnBg
+                        Row {
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
+                                      leftMargin: 16; rightMargin: 16 }
+                            spacing: 10
+                            Text { text: "Couldn't load transactions: " + page.feedError
+                                color: ZTheme.warnFg; font.pixelSize: 11; elide: Text.ElideRight
+                                width: parent.width - 70; anchors.verticalCenter: parent.verticalCenter }
+                            Rectangle { width: 56; height: 22; radius: 6; color: ZTheme.warnBtnBg; border.width: 1; border.color: ZTheme.warnBd
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { anchors.centerIn: parent; text: "Retry"; color: ZTheme.warnFg; font.pixelSize: 11; font.weight: Font.DemiBold }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: page.retryFeed() } }
+                        }
+                    }
                     TxTable {
-                        width: parent.width; height: parent.height - 46
+                        width: parent.width; height: parent.height - 46 - (page.feedError !== "" ? 34 : 0)
                         model: page.rows; explorer: page.explorer
                         loading: page.feedLoading; done: page.feedDone
                         emptyText: (page.backend && page.backend.state && page.backend.state.discovering) ? "⏳ scanning recent L1 blocks…" : "no transactions"

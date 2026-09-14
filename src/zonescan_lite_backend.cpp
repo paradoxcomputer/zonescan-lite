@@ -102,11 +102,15 @@ QString finishReply(QNetworkReply* reply, bool preferBody) {
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
     QString out;
-    if (!timer.isActive()) {
+    // Judged by the reply, not by the timer: nested event loops unwind LIFO, so a view call
+    // serviced inside this request's loop can hold the loop past the 15 s even though the
+    // reply landed long ago. That used to report a perfectly good /api/state as a timeout.
+    if (!reply->isFinished()) {
         reply->abort();
         out = errorJson(QStringLiteral("request timed out after 15s"), 0);
     } else if (reply->error() != QNetworkReply::NoError) {
-        const QString body = QString::fromUtf8(reply->readAll());
+        // An aborted reply has closed its device: reading it only logs "device not open".
+        const QString body = reply->isOpen() ? QString::fromUtf8(reply->readAll()) : QString();
         out = (preferBody && !body.isEmpty()) ? body : errorJson(reply->errorString(), status);
     } else {
         out = QString::fromUtf8(reply->readAll());
@@ -122,15 +126,31 @@ QString ZonescanLiteBackend::httpGet(const QString& path) {
     return httpGetFrom(m_baseUrl, path);
 }
 
-QString ZonescanLiteBackend::httpGetFrom(const QString& base, const QString& path) {
-    const QUrl url(base + path);
-    if (!url.isValid()) return errorJson(QStringLiteral("bad url"));
+namespace {
+QNetworkRequest getRequest(const QUrl& url) {
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   QStringLiteral("zonescan_lite/") + QStringLiteral(ZONESCAN_LITE_VERSION));
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);
-    return finishReply(nam().get(req), false);
+    return req;
+}
+} // namespace
+
+QString ZonescanLiteBackend::httpGetFrom(const QString& base, const QString& path) {
+    const QUrl url(base + path);
+    if (!url.isValid()) return errorJson(QStringLiteral("bad url"));
+    return finishReply(nam().get(getRequest(url)), false);
+}
+
+QString ZonescanLiteBackend::pollGet(const QString& path) {
+    const QUrl url(m_baseUrl + path);
+    if (!url.isValid()) return errorJson(QStringLiteral("bad url"));
+    QNetworkReply* reply = nam().get(getRequest(url));
+    m_pollReply = reply;
+    const QString out = finishReply(reply, false);
+    m_pollReply.clear();
+    return out;
 }
 
 QString ZonescanLiteBackend::httpPostTo(const QUrl& url, const QString& body) {
@@ -263,9 +283,9 @@ void ZonescanLiteBackend::reportError(const QString& what, const QString& detail
     const QString msg = detail.isEmpty() ? what : (what + QStringLiteral(": ") + detail);
     qCWarning(lcZonescan).noquote() << msg;
     // While an outage lasts the poll fails every 2 s; say it once, not thirty times a minute.
-    // But DECAY rather than latch: the first poll runs inside onContextReady(), which the
-    // generated glue calls before setBackend(), so that emission reaches no replica. A pure
-    // latch would then silence an entire cold-start outage. Repeat every ~30 s instead.
+    // But DECAY rather than latch: a replica that attaches after the first emission (a view
+    // reopened later, a reconnect) would otherwise never hear about an outage that is still
+    // going on. Repeat every ~30 s instead.
     if (msg == m_lastErrorSent && (++m_errorRepeats % 15) != 0) return;
     if (msg != m_lastErrorSent) m_errorRepeats = 0;
     m_lastErrorSent = msg;
@@ -284,12 +304,34 @@ void ZonescanLiteBackend::onContextReady() {
     // call landing mid-teardown blocks on a dead peer and freezes the window.
     connect(qApp, &QCoreApplication::aboutToQuit, this,
             [this]() { m_shuttingDown = true; if (m_pollTimer) m_pollTimer->stop(); });
-    poll();   // fill immediately, don't wait a full interval
+    // Fill immediately, but from the event loop. This runs inside initLogos(), BEFORE ui-host
+    // has created its QRemoteObjectHost or printed READY, so a synchronous first poll held the
+    // whole module start-up hostage to zonescan's latency (up to ~75 s of timeouts) - and the
+    // parent gives READY only 30 s. Deferred by one event-loop turn, remoting is up when the
+    // first state lands, so the replica sees it (and any first-poll error) instead of nothing.
+    m_pollTimer->start(0);
 }
 
 void ZonescanLiteBackend::poll() {
-    if (m_busy || m_shuttingDown) return;   // re-entered from a nested loop, or tearing down
+    if (m_shuttingDown) return;
+    // A tick that lands inside a view call's nested event loop: do not nest a poll in there.
+    // The call's reply is only written once its nested loop returns, so a poll started now
+    // would hold that reply (and the "loading" state behind it) for the poll's whole duration.
+    // Run instead the moment the outermost call returns (CallGuard).
+    if (m_callDepth > 0) { m_pollDeferred = true; return; }
+    // Defensive: every other holder of m_busy is a guarded slot (probeNode runs under
+    // checkNode/setNodeUrl), so this is caught by the depth check above. Kept because the old
+    // guard returned BEFORE Rearm existed, and a tick during a rejected node probe then stopped
+    // the timer for good; re-arming here makes that class of mistake self-healing.
+    if (m_busy) { if (m_pollTimer) m_pollTimer->start(kPollIntervalMs); return; }
     m_busy = true;
+    m_refreshPending = false;   // this poll is the refresh, if one was asked for
+    m_pollDeferred = false;     // ...and the tick that was deferred, if any
+    // Node-scoped: setNodeUrl() can be serviced inside this poll's nested loop, and applyNode()
+    // then aborts the request in flight here and republishes everything for the node it chose
+    // (possibly the same one). Whatever that request returns belongs to the poll that started
+    // before the switch and must not be published, nor reported as an outage.
+    const int gen = m_nodeGen;
     // Re-arm on every exit path, so one failed cycle can never end the polling.
     struct Rearm {
         ZonescanLiteBackend* self;
@@ -298,12 +340,15 @@ void ZonescanLiteBackend::poll() {
             // aboutToQuit can be delivered by the nested event loop a blocking request spins,
             // i.e. while this poll is mid-flight. Re-arming then would undo the stop() and keep
             // firing synchronous calls into a peer that is going away.
+            // A refresh that arrived mid-poll, or a tick deferred by a slot serviced inside
+            // this poll, is served straight away rather than dropped.
             if (self->m_pollTimer && !self->m_shuttingDown)
-                self->m_pollTimer->start(kPollIntervalMs);
+                self->m_pollTimer->start((self->m_refreshPending || self->m_pollDeferred) ? 0 : kPollIntervalMs);
         }
     } rearm{this};
 
-    const QString stateJson = httpGet(QStringLiteral("/api/state"));
+    const QString stateJson = pollGet(QStringLiteral("/api/state"));
+    if (m_nodeGen != gen) { m_pollDeferred = true; return; }   // node re-applied under us: this poll is stale
     if (isError(stateJson)) {
         setConnectionStatus(m_connectedOnce ? QStringLiteral("Error")
                                             : QStringLiteral("Connecting"));
@@ -316,34 +361,60 @@ void ZonescanLiteBackend::poll() {
     setState(jsonToMap(stateJson));
     setLastOkUnix(QDateTime::currentSecsSinceEpoch());
 
-    const QString txsJson = httpGet(QStringLiteral("/api/txs"));
+    const QString txsJson = pollGet(QStringLiteral("/api/txs"));
+    if (m_nodeGen != gen) { m_pollDeferred = true; return; }
     if (!isError(txsJson)) setTxs(jsonToList(txsJson));
 
     // Program registry (names/guesses/schemas) changes server-side on an interval —
     // fetch on first fill, then every ~30 s (15 polls). Guesses refresh a bit more.
     const bool first = programs().isEmpty() && guesses().isEmpty();
     if (first || (m_registryTick % 15) == 0) {
-        const QString pJson = httpGet(QStringLiteral("/api/programs"));
+        const QString pJson = pollGet(QStringLiteral("/api/programs"));
+        if (m_nodeGen != gen) { m_pollDeferred = true; return; }
         if (!isError(pJson)) setPrograms(jsonToMap(pJson));
-        const QString sJson = httpGet(QStringLiteral("/api/schemas"));
+        const QString sJson = pollGet(QStringLiteral("/api/schemas"));
+        if (m_nodeGen != gen) { m_pollDeferred = true; return; }
         if (!isError(sJson)) setSchemas(jsonToMap(sJson));
     }
     if (first || (m_registryTick % 6) == 0) {
-        const QString gJson = httpGet(QStringLiteral("/api/program_guesses"));
+        const QString gJson = pollGet(QStringLiteral("/api/program_guesses"));
+        if (m_nodeGen != gen) { m_pollDeferred = true; return; }
         if (!isError(gJson)) setGuesses(jsonToMap(gJson));
     }
     ++m_registryTick;
 }
 
-// A manual refresh from the view. If a poll is already running the cycle is in hand and
-// re-entering it would only nest another request inside the blocked one.
+// A manual refresh from the view.
+//
+// This slot is dispatched from inside the QtRO connection's readyRead handler, and
+// QAbstractSocket suppresses re-entrant readyRead. Running the poll HERE therefore left every
+// call the view sent in the meantime (a page fetch, a transaction lookup, a search) unread in
+// the socket until the whole poll returned - up to ~75 s when zonescan is slow, which is how a
+// refresh click turned into a feed "stuck loading". A timer-driven poll does not have that
+// property: the nested loops inside its requests keep servicing the socket. So the poll is
+// scheduled, never run inline.
+//
+// If a poll is already running (or a view call is in progress) the request is remembered and
+// served by the next re-arm rather than dropped: the toast says "Refreshing…", so it must.
 void ZonescanLiteBackend::refresh() {
-    if (m_busy || m_shuttingDown) return;
-    if (m_pollTimer) m_pollTimer->stop();
-    poll();
+    if (m_shuttingDown) return;
+    m_refreshPending = true;
+    if (m_busy || m_callDepth > 0) return;   // Rearm / CallGuard will honour m_refreshPending
+    if (m_pollTimer) m_pollTimer->start(0);
+}
+
+ZonescanLiteBackend::CallGuard::CallGuard(ZonescanLiteBackend* s) : self(s) { ++self->m_callDepth; }
+ZonescanLiteBackend::CallGuard::~CallGuard() {
+    if (--self->m_callDepth > 0) return;
+    // Outermost view call done: run the poll that was deferred (or asked for) meanwhile.
+    if ((self->m_pollDeferred || self->m_refreshPending) && self->m_pollTimer && !self->m_shuttingDown && !self->m_busy) {
+        self->m_pollDeferred = false;
+        self->m_pollTimer->start(0);
+    }
 }
 
 QVariantMap ZonescanLiteBackend::getTx(QString hash) {
+    const CallGuard guard(this);
     return mapResult(httpGet(QStringLiteral("/api/tx/") + encodeSegment(hash)));
 }
 
@@ -351,6 +422,7 @@ QVariantMap ZonescanLiteBackend::getTx(QString hash) {
 // transaction hash is not unique across zones, so an unscoped lookup can return another
 // zone's copy of an identical (e.g. genesis) transaction.
 QVariantMap ZonescanLiteBackend::getTxOn(QString hash, QString channel) {
+    const CallGuard guard(this);
     const QString query = channel.isEmpty() ? QString() : QStringLiteral("channel=") + channel;
     return mapResult(httpGet(withQuery(QStringLiteral("/api/tx/") + encodeSegment(hash), query)));
 }
@@ -362,6 +434,7 @@ QVariantMap ZonescanLiteBackend::getTxOn(QString hash, QString channel) {
 // NOT the same as ok=true with an empty `blocks` (the batch held no LEZ blocks). Collapsing
 // the two made a zonescan outage read as "your chain contains nothing we recognise".
 QVariantMap ZonescanLiteBackend::decodeBlocks(QString body) {
+    const CallGuard guard(this);
     const QString json = httpPost(QStringLiteral("/api/decode"), body);
     QVariantMap out = mapResult(json);
     if (out.value(QStringLiteral("ok")).toBool() && !out.contains(QStringLiteral("blocks")))
@@ -372,6 +445,7 @@ QVariantMap ZonescanLiteBackend::decodeBlocks(QString body) {
 // One JSON-RPC call against the sequencer the user named. The result is unwrapped to
 // {result} / {error} so the view never has to know the JSON-RPC envelope.
 QVariantMap ZonescanLiteBackend::localRpc(QString url, QString method, QVariantList params) {
+    const CallGuard guard(this);
     QJsonObject req;
     req[QStringLiteral("jsonrpc")] = QStringLiteral("2.0");
     req[QStringLiteral("id")] = 1;
@@ -404,22 +478,28 @@ QVariantMap ZonescanLiteBackend::localRpc(QString url, QString method, QVariantL
 }
 
 QVariantMap ZonescanLiteBackend::getTxsQuery(QString query) {
+    const CallGuard guard(this);
     return listResult(httpGet(withQuery(QStringLiteral("/api/txs"), query)),
                       QStringLiteral("items"));
 }
 QVariantMap ZonescanLiteBackend::getAccountQuery(QString id, QString query) {
+    const CallGuard guard(this);
     return mapResult(httpGet(withQuery(QStringLiteral("/api/account/") + encodeSegment(id), query)));
 }
 QVariantMap ZonescanLiteBackend::getTokenQuery(QString id, QString query) {
+    const CallGuard guard(this);
     return mapResult(httpGet(withQuery(QStringLiteral("/api/token/") + encodeSegment(id), query)));
 }
 QVariantMap ZonescanLiteBackend::getTokenHolders(QString id, QString query) {
+    const CallGuard guard(this);
     return mapResult(httpGet(withQuery(QStringLiteral("/api/token/") + encodeSegment(id) + QStringLiteral("/holders"), query)));
 }
 QVariantMap ZonescanLiteBackend::getProgramQuery(QString id, QString query) {
+    const CallGuard guard(this);
     return mapResult(httpGet(withQuery(QStringLiteral("/api/program/") + encodeSegment(id), query)));
 }
 QVariantMap ZonescanLiteBackend::getTokenOf(QString account, QString channel) {
+    const CallGuard guard(this);
     // `channel` is NOT optional server-side: zonescan's TokenOfQuery declares it a plain
     // String, so omitting it answers 400 "missing field `channel`" rather than resolving
     // zone-agnostically. Send it unconditionally, empty when unknown, which is what the web
@@ -429,6 +509,7 @@ QVariantMap ZonescanLiteBackend::getTokenOf(QString account, QString channel) {
     return mapResult(httpGet(withQuery(QStringLiteral("/api/token_of"), q)));
 }
 QVariantMap ZonescanLiteBackend::getSchemas() {
+    const CallGuard guard(this);
     QVariantMap out = mapResult(httpGet(QStringLiteral("/api/schemas")));
     // A manual refresh republishes the PROP too, so every open page re-decodes at once.
     if (out.value(QStringLiteral("ok")).toBool()) {
@@ -439,12 +520,15 @@ QVariantMap ZonescanLiteBackend::getSchemas() {
     return out;
 }
 QVariantMap ZonescanLiteBackend::submitSchema(QString body) {
+    const CallGuard guard(this);
     return mapResult(httpPost(QStringLiteral("/api/schemas/submit"), body));
 }
 QVariantMap ZonescanLiteBackend::whatIs(QString value) {
+    const CallGuard guard(this);
     return mapResult(httpGet(QStringLiteral("/api/whatis/") + encodeSegment(value)));
 }
 QVariantMap ZonescanLiteBackend::getElf(QString hash) {
+    const CallGuard guard(this);
     return mapResult(httpGet(QStringLiteral("/api/elf/") + encodeSegment(hash)));
 }
 
@@ -508,10 +592,18 @@ QVariantMap ZonescanLiteBackend::probeNode(const QString& base) {
 // rather than left on screen under the new node's name until the first poll lands.
 void ZonescanLiteBackend::applyNode(const QString& url, const QString& source) {
     qCWarning(lcZonescan).noquote() << "switching node to" << url << "(" << source << ")";
+    // This runs inside the setNodeUrl() slot, which may itself be serviced inside a running
+    // poll's request loop. That request now belongs to the old node: cut it short rather than
+    // let it run out its 15 s (a dead old node is exactly why the user is switching), so the
+    // new node's first poll follows at once. poll() drops its result on the base mismatch.
+    if (m_pollReply) m_pollReply->abort();
+    ++m_nodeGen;
     m_baseUrl = url;
-    setBaseUrl(url);
-    setNodeSource(source);
 
+    // Data first, name last. The view rebuilds its pages on the baseUrl PROP, and every PROP
+    // change is one packet: were baseUrl published first, the new home page would be created
+    // while `txs` still held the old node's window and would prepend all of it. Clearing the
+    // data before the name means the page is born against an empty window.
     setState(QVariantMap());
     setTxs(QVariantList());
     setPrograms(QVariantMap());
@@ -524,17 +616,23 @@ void ZonescanLiteBackend::applyNode(const QString& url, const QString& source) {
     m_lastErrorSent.clear();
     m_errorRepeats = 0;
     setConnectionStatus(QStringLiteral("Connecting"));
+    setNodeSource(source);
+    setBaseUrl(url);
 
-    // Guarded, so a switch made from inside a blocked poll's nested event loop does not stack
-    // another one; the re-armed timer picks it up within the interval either way.
+    // Always reached from inside the setNodeUrl() call, so this defers and runs as soon as the
+    // slot returns (CallGuard), or, when the slot was serviced inside a running poll, as soon
+    // as that poll notices the switch and re-arms (Rearm honours m_pollDeferred). Either way
+    // the settings panel gets its answer first and the new node's state follows.
     poll();
 }
 
 QVariantMap ZonescanLiteBackend::checkNode(QString url) {
+    const CallGuard guard(this);
     return probeNode(normalizeNode(url));
 }
 
 QVariantMap ZonescanLiteBackend::setNodeUrl(QString url) {
+    const CallGuard guard(this);
     // Empty means "forget my choice": clear the saved value and fall back to the env var or
     // the built-in default. Deliberately NOT probed — reset has to work while offline, or a
     // bad saved node would be unrecoverable from the UI.

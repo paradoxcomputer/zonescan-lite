@@ -17,6 +17,10 @@ Item {
     readonly property int rev: explorer ? explorer.rev : 0
 
     property var tx: null
+    // Every feed page has feedGen; this page had nothing, so a superseded getTxOn (a call that
+    // never resolves, then Ctrl+R or a reconnect issues a fresh one) could fire its 45 s
+    // timeout AFTER the retry had loaded and paint an error over a transaction that is there.
+    property int loadGen: 0
     property bool loaded: false
     property bool notFound: false
     property string loadError: ""     // the request failed — NOT the same as "no such transaction"
@@ -83,8 +87,12 @@ Item {
     readonly property var cidPin: { page.rev; return (tx && tx.kind === "raw") ? ZT.cidPinData(tx) : null; }
 
     Component.onCompleted: load()
+    function pageRefresh() { retry(); }
     function retry() {
-        page.loaded = false; page.notFound = false; page.loadError = "";
+        page.loadGen++;
+        // `tx` is cleared too: a refresh that fails must not render its error over the body it
+        // was refreshing, and the feeds empty their rows on refresh for the same reason.
+        page.loaded = false; page.notFound = false; page.loadError = ""; page.tx = null;
         page.tokResolved = null; page.layout = null;
         page.load();
     }
@@ -98,9 +106,14 @@ Item {
             page.tx = lt;
             return;
         }
+        // Not before the replica can carry a call; Main.qml re-issues this (pageRefresh) the
+        // moment ready flips, and the page keeps showing "loading transaction…" until then.
+        if (!explorer || !explorer.ready) return;
+        var gen = page.loadGen;
         // zone-scoped: a hash is not unique across zones, and this page knows its zone
         explorer.watch(backend.getTxOn(txHash, page.channel),
             function (t) {
+                if (gen !== page.loadGen) return;
                 page.loaded = true;
                 if (!t || !t.ok) {
                     if (t && t.status === 404) page.notFound = true;
@@ -111,17 +124,18 @@ Item {
                 page.tx = t;
                 page.refineInstruction(t);
             },
-            function () { page.loaded = true; page.loadError = "the request failed"; });
+            function (e) { if (gen !== page.loadGen) return; page.loaded = true; page.loadError = e || "the request failed"; });
     }
     // token-standard transfer → resolve which token via the holding account, then
     // custom/deployed programs with no schema → infer a layout from the corpus.
     // Fetches only. Every branch stores an INPUT; none of them renders, so nothing here can be
     // left holding a stale colour and nothing here re-runs on a theme flip.
     function refineInstruction(t) {
+        var gen = page.loadGen;
         var name = ZT.progName(t.program);
         if (name === "token" && t.instruction_data && t.instruction_data.length >= 5 && t.instruction_data[0] === 0 && t.accounts && t.accounts[0]) {
             explorer.watch(backend.getTokenOf(t.accounts[0], page.zoneId),
-                function (tok) { if (tok && tok.ok) page.tokResolved = tok; }, function () {});
+                function (tok) { if (gen === page.loadGen && tok && tok.ok) page.tokResolved = tok; }, function () {});
         }
         var haveSchema = ZT.SCHEMAS && ZT.SCHEMAS[t.program];
         if (t.program && t.instruction_data && t.instruction_data.length && !haveSchema && page.builtinProgs.indexOf(name) < 0) {
@@ -135,6 +149,7 @@ Item {
             }
             explorer.watch(backend.getProgramQuery(t.program, "channel=" + encodeURIComponent(page.zoneId)),
                 function (d) {
+                    if (gen !== page.loadGen) return;
                     if (!d || !d.ok) return;   // leave the layout unmemoized so a retry can infer it
                     var samples = (d.txs || []).map(function (x) { return x.instruction_data; });
                     var lay = ZT.inferLayout(samples);

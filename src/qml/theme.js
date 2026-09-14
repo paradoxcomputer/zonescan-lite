@@ -324,6 +324,15 @@ function fltSig() {
 // zone's copy but the first. The server's own cursor includes before_channel for the same
 // reason. Local rows carry the pseudo-zone, which keeps them distinct from a remote row.
 function rowKey(t) { return String(t.channel || "") + ":" + String(t.hash || ""); }
+// A row read off `backend.txs` is NOT a value. QML hands out elements of a QVariantList
+// property as live references to "element k of the property as it is NOW" (the object's
+// prototype is not Object.prototype, and its fields re-read the list on every access), and
+// the same goes for the nested `accounts` / `instruction_data` arrays. Keep one across a poll
+// that shifts the window and it silently turns into a different transaction: every row a feed
+// had prepended showed the newest hash twice, the tail row vanished, and clicks opened the
+// wrong transaction. Snapshot before storing. Call results (a page fetch) are plain copies and
+// do not need this; only rows lifted from the PROP do.
+function snapshot(t) { return JSON.parse(JSON.stringify(t)); }
 
 // ── risc0 word decoders (ported verbatim) ────────────────────────────────────
 function u128le(w, off) { var v = BigInt(0); for (var i = 0; i < 4; i++) v += BigInt((w[off + i] || 0) >>> 0) << BigInt(32 * i); return v; }

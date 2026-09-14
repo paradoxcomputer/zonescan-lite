@@ -3,6 +3,100 @@
 All notable changes to ZoneScan Lite. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `metadata.json`.
 
+## [0.3.3] — 2026-09-14
+
+A user reported the feed "stuck in loading tx after clicking the refresh icon". Reproduced
+against the real app: the icon had two defects of its own (it stalled every later call, and
+it never reloaded the page), and the click surfaced five more that were there all along, the
+worst of which latched the home feed "loading" on every cold open.
+
+### Fixed
+
+- **The home feed latched "loading" on every cold open.** `HomePage` sent its first page
+  request in the same synchronous pass that created the QtRO replica, before the handshake
+  had finished (`qt.remoteobjects: connectionToSource is null`, once per session, every
+  session). QtRO answers that with a pending token whose error stays `InvalidMessage`, so it
+  can never finish, and `logos.watch` waits on it forever. The rows on screen came from the
+  poll window, so the feed looked populated while the `loading` footer never cleared,
+  scrolling never paged, and nothing retried. Pages now skip their first fetch until the
+  replica is ready, and `Main.qml` re-issues it (`pageRefresh()`) the moment `ready` flips —
+  which also covers a reconnect.
+
+- **A call whose reply never comes no longer freezes its surface for good.** Every loading
+  flag in the app is cleared only inside a `watch()` callback, and neither logos.watch nor
+  QtRO fails a call whose connection dropped mid-flight. `explorer.watch` now fails a call
+  made before the replica is ready immediately, and every call after 45 s; the failure lands
+  in the same error + Retry the pages already had, and a late reply is dropped.
+
+- **Rows prepended from the live poll turned into other transactions.** An element read off
+  `backend.txs` is a QML *reference* to "element k of the property as it is now", not a value
+  (its prototype is not `Object.prototype`; its nested arrays are references too). Every poll that
+  shifted the window rewrote every row a feed had ever prepended: the newest hash twice at
+  the top, the tail row gone, clicks opening the wrong transaction. On the latched feed above,
+  where all 150 rows were such references, the first new transaction corrupted the whole
+  list. `prependLive()` snapshots (`ZT.snapshot`) before storing. Page-fetched rows were never
+  affected. Found by injecting a synthetic transaction through a local proxy; the testnet was
+  too quiet to show it.
+
+- **The refresh icon stalled everything the view asked for next.** `refresh()` ran the whole
+  blocking poll *inside* the QtRO socket's `readyRead` handler, and `QAbstractSocket`
+  suppresses re-entrant `readyRead`, so a page fetch, a transaction lookup or a search sent
+  during a manual refresh sat unread in the socket until the poll returned: measured 12–20 s
+  with a 12 s delayed `/api/state` (7/7), up to ~75 s when requests hit their 15 s timeouts,
+  ~1.2 s on a healthy server. A timer-driven poll never had that property. The refresh now
+  only schedules the poll (0 ms timer), and one asked for while a poll is running is served
+  by the next re-arm instead of being silently dropped (5/5 clicks during a poll produced no
+  request at all while the toast still said "Refreshing…").
+
+- **Refresh reloads the page you are looking at.** `doRefresh()` only re-polled the state
+  snapshot; a feed, a transaction page or an account never re-fetched, so from the user's
+  seat the click did nothing. It now calls the page's `pageRefresh()` first, then the poll.
+
+- **Polls no longer nest inside a view call.** A timer tick that landed inside a page fetch's
+  nested event loop started a poll *there*, and the fetch's reply could not be written until
+  that poll returned (LIFO). Polls are deferred while a `.rep` slot is executing and run the
+  instant the outermost one returns. The same guard fixes a latent stop: a tick during a
+  rejected node probe returned before the timer was re-armed, ending polling for good.
+
+- **Start-up no longer blocks on the first poll.** It ran synchronously inside `initLogos()`,
+  before ui-host had created its `QRemoteObjectHost` or printed READY, so a slow zonescan
+  held the module start-up hostage (the parent allows 30 s). The first poll now runs from
+  the event loop, one turn later, with remoting up.
+
+- Feed and page error banners now carry the reason (`not connected to zonescan yet`,
+  `timed out after 45s`, the server's own message) instead of a fixed "the request failed";
+  the search box and the node check say why too. The program page, which set `feedError` and
+  defined its Retry from the start and rendered neither, gets the same banner as Home.
+
+- **Zone, account, token and program feeds stacked day-old rows above the newest page.**
+  Their `prependLive()` lacked Home's "only newer than the current head" guard, so whenever
+  page 1 landed before the next poll, every unseen row of the 150-row window went on top
+  (measured: 100 rows reaching 62 h back above the newest 50, one seam). Refresh made it
+  routine, since it now reloads the page.
+
+- `finishReply()` judged a timeout by its own timer, but nested event loops unwind LIFO: a
+  view call serviced inside a poll's request could hold that loop past 15 s and a reply that
+  had long landed was reported as "request timed out". It is judged by the reply now.
+
+- A poll that was mid-flight when the node was switched published the OLD node's answer
+  under the new name (or toasted its timeout after "Now reading …"). Polls are node-scoped:
+  the in-flight request is aborted on the switch, whatever it returns is dropped, and the
+  new node is polled at once; re-applying the node already shown (a reset onto it) aborts
+  and re-polls the same way without reporting the abort as an outage. On the view side the
+  switch is applied from the `baseUrl` PROP rather than from the `setNodeUrl` reply, so it
+  still lands when that reply is late (a probe can take two 15 s attempts behind queued
+  calls) or lost; the backend publishes the cleared data before the new name, so the page
+  the view rebuilds is born against an empty window. The panel's messages are all the reply
+  drives.
+
+- A feed whose first pages were already on screen (the poll window landed before page 1)
+  needed one scroll nudge per page before it grew, since a page that adds no row does not
+  move the scroll position that asked for it. Such pages chain into the next one, bounded by
+  the window's depth.
+
+- A transaction page had no request generation: a superseded lookup could paint its late
+  failure over a transaction a retry had since loaded. It has one now, like every feed.
+
 ## [0.3.2] — 2026-08-30
 
 Dark mode, and a feed bug found while testing it.

@@ -62,6 +62,7 @@ Item {
     // drops itself if it no longer matches, so a reply for the PREVIOUS filter cannot land in
     // the list the new filter just emptied.
     property int feedGen: 0
+    property int emptyPages: 0   // consecutive page replies that added no row; see loadMore
     readonly property bool narrow: page.width > 0 && page.width < 900
 
     function buildQuery(cur) {
@@ -83,14 +84,20 @@ Item {
         if (page.fltSig !== ZT.fltSig()) page.resetFeed();
     }
     function resetFeed() {
+        // Not before the replica can carry a call: the first fetch used to go out during the
+        // cold-open handshake and its token never resolved, which latched the feed "loading"
+        // for the life of the page. Main.qml re-issues it (pageRefresh) the moment ready flips.
+        if (!explorer || !explorer.ready) return;
         // feedLoading was NOT cleared here, and loadMore() returns early while it is set - so
         // changing a filter mid-fetch emptied the list and then issued no request at all.
         feedGen++;
         fltSig = ZT.fltSig();
-        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({});
+        rows = []; cursor = null; feedDone = false; feedLoading = false; feedError = ""; seen = ({}); emptyPages = 0;
         loadMore(true);
     }
     function retryFeed() { feedError = ""; loadMore(true); }
+    // The ⟳ icon / Ctrl+R / Retry: reload this page, not just the poller's snapshot.
+    function pageRefresh() { resetFeed(); }
     function loadMore(first) {
         if (!backend) return;
         if (feedLoading || (feedDone && !first)) return;
@@ -113,10 +120,17 @@ Item {
                 page.rows = page.rows.concat(add);
                 if (list.length) { var last = list[list.length - 1]; page.cursor = { ts: last.timestamp, block: last.block_id, hash: last.hash, channel: last.channel }; }
                 if (list.length < pageSize) page.feedDone = true;
+                // A page whose rows were all already on screen (the poll window landed before
+                // page 1, so pages 1-3 are fully "seen") adds nothing, and the scroll position
+                // that asked for it does not move, so nothing would ask for the next one: the
+                // feed only grew after one nudge per empty page. Chain on, bounded by the depth
+                // of the window (three pages), so a server ignoring the cursor cannot loop.
+                if (!add.length && !page.feedDone && page.emptyPages < 3) { page.emptyPages++; page.loadMore(false); }
+                else if (add.length) page.emptyPages = 0;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.feedLoading = false; page.feedError = "the request failed";
+                page.feedLoading = false; page.feedError = e || "the request failed";
             });
     }
     // live prepend from the polled backend.txs (mirrors SSE prependTxs + feedMatches)
@@ -152,7 +166,7 @@ Item {
             if (solo && t.channel !== solo) continue;
             if (!ZT.filterMatches(t)) continue;
             if (!ZT.clockOk(t)) continue;
-            page.seen[key] = true; add.push(t);
+            page.seen[key] = true; add.push(ZT.snapshot(t));   // a reference into backend.txs, not a value: see ZT.snapshot
         }
         if (add.length) {
             var next = add.concat(page.rows);

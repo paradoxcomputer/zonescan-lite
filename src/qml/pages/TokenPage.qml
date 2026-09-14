@@ -30,6 +30,7 @@ Item {
     readonly property int pageSize: 50
     readonly property int maxRows: 600
     property int feedGen: 0
+    property int emptyPages: 0   // consecutive page replies that added no row; see loadMore
 
     // ── holders list (own paginated scroll region) ──
     property var holders: []
@@ -58,13 +59,14 @@ Item {
         if (filterBar) filterBar.sync();
         if (page.fltSig !== ZT.fltSig()) page.load();
     }
+    function pageRefresh() { load(); }
     function load() {
-        if (!backend) return;
+        if (!backend || !explorer.ready) return;   // re-issued from Main.qml when ready flips
         feedGen++;
         fltSig = ZT.fltSig();
         page.loaded = false; page.notFound = false; page.loadError = ""; page.a = null;
         page.rows = []; page.cursor = null; page.feedDone = false; page.feedLoading = false;
-        page.feedError = ""; page.seen = ({});
+        page.feedError = ""; page.seen = ({}); page.emptyPages = 0;
         page.holders = []; page.holdNext = null; page.holdLoading = false; page.holdersLoadedOnce = false;
         var gen = page.feedGen;
         explorer.watch(backend.getTokenQuery(tokenId, initQuery()),
@@ -84,9 +86,9 @@ Item {
                 page.feedDone = txs.length < pageSize;
                 page.initHolders();
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.loaded = true; page.loadError = "the request failed";
+                page.loaded = true; page.loadError = e || "the request failed";
             });
     }
     function retry() { page.load(); }
@@ -109,10 +111,17 @@ Item {
                 page.rows = page.rows.concat(add);
                 if (list.length) { var last = list[list.length - 1]; page.cursor = { ts: last.timestamp, block: last.block_id, hash: last.hash, channel: last.channel }; }
                 if (list.length < pageSize) page.feedDone = true;
+                // A page whose rows were all already on screen (the poll window landed before
+                // page 1, so pages 1-3 are fully "seen") adds nothing, and the scroll position
+                // that asked for it does not move, so nothing would ask for the next one: the
+                // feed only grew after one nudge per empty page. Chain on, bounded by the depth
+                // of the window (three pages), so a server ignoring the cursor cannot loop.
+                if (!add.length && !page.feedDone && page.emptyPages < 3) { page.emptyPages++; page.loadMore(false); }
+                else if (add.length) page.emptyPages = 0;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.feedLoading = false; page.feedError = "the request failed";
+                page.feedLoading = false; page.feedError = e || "the request failed";
             });
     }
 
@@ -125,15 +134,21 @@ Item {
         if (ZT.fltSort() === "oldest") return;   // newest rows do not belong atop an oldest-first list
         var add = [];
         var txs = backend.txs;
+        // Only rows NEWER than the current head belong on top: the window reaches tens of hours
+        // back, so when page 1 lands before a poll every unseen older row would otherwise stack
+        // above the newest 50 (measured: 100 day-old rows over the head within one tick). A
+        // skipped row is not marked seen, so pagination can still reach it. Same rule as Home.
+        var headTs = page.rows.length ? page.rows[0].timestamp : null;
         for (var i = 0; i < txs.length; i++) {
             var t = txs[i], key = ZT.rowKey(t);
             if (page.seen[key]) continue;
+            if (headTs !== null && t.timestamp < headTs) continue;
             if (t.channel !== page.channel) continue;
             var accs = t.accounts || [];
             if (!(accs.indexOf(page.tokenId) >= 0 || (page.a.name && t.token === page.a.name))) continue;
             if (!ZT.filterMatches(t)) continue;
             if (!ZT.clockOk(t)) continue;
-            page.seen[key] = true; add.push(t);
+            page.seen[key] = true; add.push(ZT.snapshot(t));   // a reference into backend.txs, not a value: see ZT.snapshot
         }
         if (add.length) {
             var next = add.concat(page.rows);
@@ -174,9 +189,9 @@ Item {
                 page.holdNext = (hs.length >= 50 && r.next) ? r.next : false;
                 page.holdersLoadedOnce = true;
             },
-            function () {
+            function (e) {
                 if (gen !== page.feedGen) return;
-                page.holdLoading = false; page.holdError = "the request failed";
+                page.holdLoading = false; page.holdError = e || "the request failed";
             });
     }
 
