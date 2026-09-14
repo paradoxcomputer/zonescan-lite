@@ -3,6 +3,36 @@
 All notable changes to ZoneScan Lite. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `metadata.json`.
 
+## [0.3.4] — 2026-09-14
+
+### Added
+
+- **The maintained LEZ programs deployed to testnet (v0.2.4) are named and decoded.** zonescan
+  0.8.2 publishes the four ids (`token`, `amm`, `twap_oracle`, `token_mint_authority`) through
+  `/api/programs`, and rows keep the hex id, so `theme.js` tells the maintained dialects from
+  the built-ins by id: the maintained token's `MintWithAuthority` (variant 6, where the built-in
+  has `PrintNft`), its trailing `mint_authority`, the `SetAuthority` pair; the maintained amm's
+  own enum (`Initialize` with its fee, pool creation, add/remove liquidity, the two swaps with
+  their bounds and holdings, `SyncReserves`, `WithdrawProtocolFees`); the oracle's
+  `PublishPrice`/`RecordTick`; the faucet's `FaucetMint`. Ported 1:1 from the website, with new
+  Type labels for the two programs that have none (`TWAP Oracle`, `Mint Authority`). Verified
+  in the real app against a zonescan 0.8.2 serving the testnet's actual transactions.
+
+### Fixed
+
+- **Every instruction with a 64- or 128-bit field was missing from the transaction page.**
+  Qt 6.9.2's QML engine has no `BigInt`, `theme.js` used it for every `u64`/`u128` read, base58
+  encoding and hex-to-base58, and `TxPage` swallowed the resulting throw, so the Instruction row
+  was silently absent for every token transfer, every amount, every amm op. The port now carries
+  its own unsigned-integer arithmetic (16-bit limbs), checked against `BigInt` on random 128-bit
+  values, base58 and hex; `sitometres.yaml` asserts that an opened transaction with instruction
+  words renders a decode.
+- A hex-stored program whose resolved name has no Type chip of its own is filed under "Program"
+  by the live feed's filter, as the server already did, instead of vanishing whenever any chip is
+  selected.
+- "Create token" reads the name off the chain when the definition has not been learned yet, and
+  `Burn`/`Mint` rows show what they moved.
+
 ## [0.3.3] — 2026-09-14
 
 A user reported the feed "stuck in loading tx after clicking the refresh icon". Reproduced

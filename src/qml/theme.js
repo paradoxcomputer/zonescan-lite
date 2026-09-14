@@ -257,8 +257,38 @@ function elfHref(hash) { return ZONESCAN_BASE ? (ZONESCAN_BASE + "/api/elf/" + u
 var TYPE_LABEL = {
     clock:"Clock", token:"Token", authenticated_transfer:"Transfer", ata:"ATA", amm:"AMM",
     pinata:"Pinata", pinata_token:"Pinata Token", deploy:"Deploy", shield:"Shield", deshield:"Deshield",
+    twap_oracle:"TWAP Oracle", token_mint_authority:"Mint Authority",
     "private-send":"Transfer", public:"Public", private:"Private", raw:"Inscription"
 };
+// ── the maintained lez-programs deployments (zonescan's LEZ_PROGRAMS_V024) ──────────────
+// Same names as the built-ins, different instruction enums: the maintained token inserts
+// MintWithAuthority at 6 (the built-in's PrintNft) and adds 8/9 SetAuthority*, and the
+// maintained amm is a different program altogether. Rows for these keep the hex id (the server
+// names them at read time), which is what tells the two dialects apart here; a plain built-in
+// name means the built-in enum. Ported 1:1 from the website.
+var DIALECT_V024 = {
+    "14b3bc6cc129d0359f9595ba0f60a13e4a8df08ffe8eb1a83251c47abecc67a8": true,
+    "cf93244a56a4bb974b72a5f5fa2fe68906709dd17ce422367baef195b57c1709": true,
+    "5681e27c27b3ece4a7c161bbf8e12e6ece6ca69925a87b77f9e193fa4a249b31": true,
+    "b0163189f35d29b3c4a4e6b64f3d797015e52fdbb5dae30433f810b8b007033a": true
+};
+function dialectOf(p) { return DIALECT_V024[p] ? "v024" : "builtin"; }
+var TOKEN_VARIANTS = {
+    builtin: ["Transfer","NewFungibleDefinition","NewDefinitionWithMetadata","InitializeAccount","Burn","Mint","PrintNft"],
+    v024: ["Transfer","NewFungibleDefinition","NewDefinitionWithMetadata","InitializeAccount","Burn","Mint","MintWithAuthority","PrintNft","SetAuthority","SetAuthorityWithAuthority"]
+};
+var AMM_VARIANTS = {
+    builtin: ["NewDefinition","AddLiquidity","RemoveLiquidity"],
+    v024: ["Initialize","UpdateConfig","CreatePriceObservations","CreateOraclePriceAccount","NewDefinition","AddLiquidity","RemoveLiquidity","SwapExactInput","SwapExactOutput","SyncReserves","WithdrawProtocolFees"]
+};
+var TWAP_VARIANTS = ["CreatePriceObservations","CreateOraclePriceAccount","CreateCurrentTickAccount","UpdateCurrentTick","PublishPrice","RecordTick"];
+// token_mint_authority's FaucetMint carries no amount in its words: the mint is a constant of
+// the program (FAUCET_MINT_AMOUNT = 10_000 tokens at 18 decimals), fixed by its image id.
+var FAUCET_MINT_AMOUNT = "10000000000000000000000";
+// basis points -> percent; a u64 of milliseconds -> "24h"; a Q64.64 fixed-point price
+function bps(x) { var n = Number(x); return (n / 100).toFixed(2).replace(/\.?0+$/, "") + "%"; }
+function durMs(ms) { var n = Number(ms); if (!(n > 0)) return n + " ms"; if (n % 3600000 === 0) return (n / 3600000) + "h"; if (n % 60000 === 0) return (n / 60000) + "min"; if (n % 1000 === 0) return (n / 1000) + "s"; return n + " ms"; }
+function q64(x) { var n = Number(x) / 18446744073709551616; return n >= 1000 ? n.toFixed(2) : n.toPrecision(6).replace(/\.?0+$/, ""); }
 function txVis(t) { return t.kind === "raw" ? "raw" : (t.kind === "private" ? "private" : "public"); }
 function txType(t) {
     if (t.kind === "raw") return "raw";
@@ -299,7 +329,15 @@ function filterParams(p) {   // p: object of query params to mutate
     if (FLT.sort === "oldest") p.sort = "oldest";
     return p;
 }
-function typeKey(t) { var ty = txType(t); return /^[0-9a-f]{40,}$/i.test(ty) ? "program" : ty; }
+// an unresolved raw-hex program id collapses to the generic "program" type for filtering -
+// and so does a hex-stored program whose resolved name has no chip of its own (twap_oracle,
+// token_mint_authority, validity_window, …): the server files those under "program" too, so
+// the live-prepend gate and the server query agree.
+function typeChipKey(ty) { for (var i = 0; i < TYPE_CHIPS.length; i++) if (TYPE_CHIPS[i][0] === ty) return true; return false; }
+function typeKey(t) {
+    var ty = txType(t); if (/^[0-9a-f]{40,}$/i.test(ty)) return "program";
+    return (/^[0-9a-f]{40,}$/i.test(t.program || "") && !typeChipKey(ty)) ? "program" : ty;
+}
 function filterMatches(t) {
     if (FLT.vis === "public" && txVis(t) !== "public") return false;
     if (FLT.vis === "private" && txVis(t) !== "private") return false;
@@ -335,8 +373,41 @@ function rowKey(t) { return String(t.channel || "") + ":" + String(t.hash || "")
 function snapshot(t) { return JSON.parse(JSON.stringify(t)); }
 
 // ── risc0 word decoders (ported verbatim) ────────────────────────────────────
-function u128le(w, off) { var v = BigInt(0); for (var i = 0; i < 4; i++) v += BigInt((w[off + i] || 0) >>> 0) << BigInt(32 * i); return v; }
-function u64le(w, off) { return BigInt((w[off] || 0) >>> 0) | (BigInt((w[off + 1] || 0) >>> 0) << BigInt(32)); }
+// ── unsigned integers wider than 53 bits, WITHOUT BigInt ────────────────────
+// QML's engine (Qt 6.9.2, what Basecamp runs) has no BigInt - `typeof BigInt === "undefined"` -
+// so every u64/u128 read used to throw, and TxPage swallowed the throw: the Instruction row was
+// simply missing for every token transfer, every amm op, every amount. The website keeps BigInt
+// (browsers have it); this port carries its own arithmetic instead. A number is an array of
+// 16-bit little-endian limbs, so every intermediate of a divide-by-10000 or multiply-by-256
+// step fits a double exactly. u128le / u64le return DECIMAL STRINGS (the website's callers only
+// ever `.toString()` them or compare with zero, so `=== "0"` is the one idiom to keep in mind).
+function bnFromWordsLE(w, off, n) { var l = []; for (var i = 0; i < n; i++) { var x = (w[off + i] || 0) >>> 0; l.push(x & 0xffff, x >>> 16); } return bnTrim(l); }
+function bnTrim(l) { while (l.length > 1 && l[l.length - 1] === 0) l.pop(); return l; }
+function bnIsZero(l) { for (var i = 0; i < l.length; i++) if (l[i]) return false; return true; }
+function bnDivSmall(l, d) {   // in place: l = floor(l / d); returns l mod d. d <= 65536.
+    var r = 0; for (var i = l.length - 1; i >= 0; i--) { var cur = r * 65536 + l[i]; l[i] = Math.floor(cur / d); r = cur - l[i] * d; }
+    bnTrim(l); return r;
+}
+function bnMulAddSmall(l, m, a) {   // in place: l = l * m + a. m, a <= 65536.
+    var carry = a; for (var i = 0; i < l.length; i++) { var cur = l[i] * m + carry; l[i] = cur & 0xffff; carry = Math.floor(cur / 65536); }
+    while (carry) { l.push(carry & 0xffff); carry = Math.floor(carry / 65536); }
+    return l;
+}
+function bnToString(l) {
+    l = l.slice(); if (bnIsZero(l)) return "0";
+    var parts = []; while (!bnIsZero(l)) parts.push(bnDivSmall(l, 10000));
+    var s = String(parts.pop()); while (parts.length) { var p = String(parts.pop()); s += "0000".slice(p.length) + p; }
+    return s;
+}
+function bnToBase58(l) {
+    var A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", s = "";
+    l = l.slice(); while (!bnIsZero(l)) s = A[bnDivSmall(l, 58)] + s;
+    return s;
+}
+function u128le(w, off) { return bnToString(bnFromWordsLE(w, off, 4)); }
+function u64le(w, off) { return bnToString(bnFromWordsLE(w, off, 2)); }
+// a u64 as a plain Number: exact below 2^53, which every timestamp and window is
+function u64num(w, off) { return ((w[off] || 0) >>> 0) + ((w[off + 1] || 0) >>> 0) * 4294967296; }
 // risc0 String = [len:u32][ceil(len/4) words of utf8, LE-packed per word]
 function r0str(w, off) {
     var len = (w[off] || 0) >>> 0, nw = Math.ceil(len / 4), b = [];
@@ -399,16 +470,33 @@ function instrText(t, tok) {
     var name = PROGS[t.program] || t.program, a = t.accounts || [];
     var acc = function (i) { return a[i] ? '<a href="wallet:' + u(t.channel) + ':' + u(a[i]) + '" style="color:' + pal.link + '">' + esc(sh(a[i], 6, 4)) + "</a>" : ""; };
     var ft = function () { return (a[0] ? " · from " + acc(0) : "") + (a[1] ? " → to " + acc(1) : ""); };
+    // an AccountId inside the instruction words is a base58 STRING (lee_core serializes it via
+    // Display), so it links like an account from the accounts list
+    var accl = function (s) { return s ? '<a href="wallet:' + u(t.channel) + ':' + u(s) + '" style="color:' + pal.link + '">' + esc(sh(s, 6, 4)) + "</a>" : ""; };
+    var mut = function (s) { return '<span style="color:' + pal.muted + '">' + s + "</span>"; };
+    // token-standard Instruction (risc0 enum): 0 Transfer, 1 NewFungibleDefinition,
+    // 2 NewDefinitionWithMetadata, 3 InitializeAccount, 4 Burn, 5 Mint, 6 PrintNft - and, in
+    // the maintained-program dialect (DIALECT_V024): 6 MintWithAuthority, 7 PrintNft,
+    // 8 SetAuthority, 9 SetAuthorityWithAuthority; variant 1 there carries a trailing
+    // mint_authority: Option<AccountId>.
     if (name === "token" && w.length >= 1) {
-        var v = w[0] >>> 0;
-        var tn = ["Transfer","NewFungibleDefinition","NewDefinitionWithMetadata","InitializeAccount","Burn","Mint","PrintNft"][v];
-        if (v === 0 && w.length >= 5) {
-            var tk = "token-standard";
-            if (tok && tok.resolved && tok.definition) { var lbl = tok.name || sh(tok.definition, 6, 4); tk = '<a href="token:' + u(t.channel) + ':' + u(tok.definition) + '" style="color:' + pal.link + '">' + esc(lbl) + "</a>"; }
-            return "<b>Transfer</b> <b>" + grp(u128le(w, 1).toString()) + "</b> " + tk + ft();
+        var v = w[0] >>> 0, dl = dialectOf(t.program);
+        var tn = TOKEN_VARIANTS[dl][v];
+        var tk = t.token ? "<b>" + esc(t.token) + "</b>" : "token-standard";
+        if (tok && tok.resolved && tok.definition) { var lbl = tok.name || sh(tok.definition, 6, 4); tk = '<a href="token:' + u(t.channel) + ':' + u(tok.definition) + '" style="color:' + pal.link + '">' + esc(lbl) + "</a>"; }
+        if (v === 0 && w.length >= 5) return "<b>Transfer</b> <b>" + grp(u128le(w, 1)) + "</b> " + tk + ft();
+        if (v === 1) {   // NewFungibleDefinition{name, total_supply[, mint_authority: Option<AccountId>]}
+            var nm = r0str(w, 1), so = 1 + r0strWords(w, 1), sup = u128le(w, so), auth = "";
+            if (dl === "v024" && w.length > so + 4) auth = ((w[so + 4] >>> 0) === 1) ? " · mint authority " + accl(r0str(w, so + 5)) : " · fixed supply";
+            return "<b>NewFungibleDefinition</b> - <b>" + esc(nm) + "</b> · supply " + grp(sup) + auth;
         }
-        if (v === 1) { var nm = r0str(w, 1), sup = u128le(w, 1 + r0strWords(w, 1)); return "<b>NewFungibleDefinition</b> - <b>" + esc(nm) + "</b> · supply " + grp(sup.toString()); }
         if (v === 3) return "<b>InitializeAccount</b>";
+        if (v === 4 && w.length >= 5) return "<b>Burn</b> <b>" + grp(u128le(w, 1)) + "</b> " + tk + (a[1] ? " · from " + acc(1) : "");
+        if (v === 5 && w.length >= 5) return "<b>Mint</b> <b>" + grp(u128le(w, 1)) + "</b> " + tk + (a[1] ? " → to " + acc(1) : "");
+        if (dl === "v024") {
+            if (v === 6 && w.length >= 5) return "<b>MintWithAuthority</b> <b>" + grp(u128le(w, 1)) + "</b> " + tk + (a[1] ? " → to " + acc(1) : "") + (a[2] ? " · authority " + acc(2) : "");
+            if ((v === 8 || v === 9) && w.length >= 2) return "<b>" + tn + "</b> - " + (((w[1] >>> 0) === 1) ? "new mint authority " + accl(r0str(w, 2)) : "renounce (fixed supply from here on)");
+        }
         return "<b>" + esc(tn || ("variant " + v)) + "</b> " + rawWords(w, 1, 17);
     }
     if (name === "authenticated_transfer") {
@@ -417,7 +505,7 @@ function instrText(t, tok) {
         if (w.length === 1 && av === 1) return "<b>Register</b> - create native account" + (a[0] ? " · " + acc(0) : "");
         if (w.length >= 4) {
             var amt = u128le(w, 0);
-            if (amt === BigInt(0)) return "<b>Register</b> - initialize native account" + (a[0] ? " · " + acc(0) : "");
+            if (amt === "0") return "<b>Register</b> - initialize native account" + (a[0] ? " · " + acc(0) : "");
             return "<b>Transfer</b> <b>" + grp(amt.toString()) + '</b> <b>LEZ</b> <span style="color:' + pal.muted + ';font-size:11px">(native)</span>' + ft();
         }
     }
@@ -427,9 +515,47 @@ function instrText(t, tok) {
         return "<b>Tick</b> - timestamp " + ts.toString() + dd;
     }
     if (name === "pinata" && w.length >= 4) return "<b>Claim</b> - PoW solution " + u128le(w, 0).toString();
+    // amm enum. Built-in: 0 NewDefinition, 1 AddLiquidity, 2 RemoveLiquidity (u128 fields).
+    // Maintained (DIALECT_V024): 0 Initialize, 1 UpdateConfig, 2 CreatePriceObservations,
+    // 3 CreateOraclePriceAccount, 4 NewDefinition, 5 AddLiquidity, 6 RemoveLiquidity,
+    // 7 SwapExactInput, 8 SwapExactOutput, 9 SyncReserves, 10 WithdrawProtocolFees; every pool
+    // op has the config PDA as accounts[0] and the pool as accounts[1]; amounts are u128 base
+    // units. A swap's actual output is not in the words (only its bound), so none is shown.
     if (name === "amm" && w.length >= 1) {
-        var vn = ["NewDefinition","AddLiquidity","RemoveLiquidity"][w[0] >>> 0] || ("variant " + (w[0] >>> 0));
+        var av2 = w[0] >>> 0, adl = dialectOf(t.program), vn = AMM_VARIANTS[adl][av2] || ("variant " + av2);
+        if (adl === "v024") {
+            var n = function (i) { return "<b>" + grp(u128le(w, i)) + "</b>"; }, pool = a[1] ? " · pool " + acc(1) : "";
+            if (av2 === 0 && w.length >= 69) return "<b>Initialize</b> - swap fee " + bps(u128le(w, 61)) + " · protocol fee " + bps(u128le(w, 65)) + " · authority " + accl(r0str(w, 49)) + (a[1] ? " · config " + acc(1) : "");
+            if (av2 === 1 && w.length >= 2) return "<b>UpdateConfig</b> - new authority " + accl(r0str(w, 1));
+            if ((av2 === 2 || av2 === 3) && w.length >= 3) return "<b>" + vn + "</b> - window " + durMs(u64le(w, 1)) + pool;
+            if (av2 === 4 && w.length >= 11) return "<b>NewDefinition</b> - " + n(1) + " + " + n(5) + " into a new pool" + pool;
+            if (av2 === 5 && w.length >= 15) return "<b>AddLiquidity</b> - up to " + n(5) + " + " + n(9) + " · min " + n(1) + " LP" + pool;
+            if (av2 === 6 && w.length >= 15) return "<b>RemoveLiquidity</b> - " + n(1) + " LP · min " + n(5) + " + " + n(9) + " back" + pool;
+            if (av2 === 7 && w.length >= 11) return "<b>SwapExactInput</b> - " + n(1) + " in · min " + n(5) + " out" + (a[4] ? " · from " + acc(4) : "") + (a[5] ? " → to " + acc(5) : "") + pool;
+            if (av2 === 8 && w.length >= 11) return "<b>SwapExactOutput</b> - " + n(1) + " out · max " + n(5) + " in" + (a[4] ? " · from " + acc(4) : "") + (a[5] ? " → to " + acc(5) : "") + pool;
+            if (av2 === 9) return "<b>SyncReserves</b>" + pool;
+            if (av2 === 10 && w.length >= 5) return "<b>WithdrawProtocolFees</b> - " + n(1) + (a[2] ? " → to " + acc(2) : "");
+        }
         return "<b>" + esc(vn) + "</b> " + rawWords(w, 1, 17);
+    }
+    // twap_oracle (maintained program): prices are Q64.64 fixed point, windows are ms.
+    // 4 PublishPrice / 5 RecordTick are the permissionless cranks; 0-3 arrive chained from the amm.
+    if (name === "twap_oracle" && w.length >= 1) {
+        var tv2 = w[0] >>> 0, tvn = TWAP_VARIANTS[tv2] || ("variant " + tv2);
+        if ((tv2 === 4 || tv2 === 5) && w.length >= 15) { var so2 = 1 + r0strWords(w, 1); return "<b>" + tvn + "</b> - source " + accl(r0str(w, 1)) + " · window " + durMs(u64le(w, so2)); }
+        if (tv2 === 0 && w.length >= 4) return "<b>CreatePriceObservations</b> - initial tick " + (w[1] | 0) + " · window " + durMs(u64le(w, 2));
+        if (tv2 === 1 && w.length >= 31) { var bo = 1 + r0strWords(w, 1), qo = bo + r0strWords(w, bo);
+            return "<b>CreateOraclePriceAccount</b> - " + accl(r0str(w, 1)) + " / " + accl(r0str(w, bo)) + " · initial price " + q64(u128le(w, qo)) + " · window " + durMs(u64le(w, qo + 4)); }
+        if ((tv2 === 2 || tv2 === 3) && w.length >= 5) return "<b>" + tvn + "</b> - price " + q64(u128le(w, 1));
+        return "<b>" + esc(tvn) + "</b> " + rawWords(w, 1, 17);
+    }
+    // token_mint_authority (maintained program): the testnet faucet. FaucetMint chains a token
+    // MintWithAuthority of the program's constant amount into accounts[2]; accounts[3] is the
+    // token definition.
+    if (name === "token_mint_authority" && w.length >= 1) {
+        var mv = w[0] >>> 0;
+        if (mv === 0) return "<b>FaucetMint</b> - <b>" + grp(FAUCET_MINT_AMOUNT) + "</b> " + (t.token ? "<b>" + esc(t.token) + "</b> " : "") + mut("(program constant)") + (a[2] ? " → to " + acc(2) : "") + (a[3] ? " · definition " + acc(3) : "");
+        return "<b>variant " + mv + "</b> " + rawWords(w, 1, 17);
     }
     if (name === "ata" && w.length >= 1) {
         var iv = w[0] >>> 0;
@@ -453,10 +579,10 @@ function instrText(t, tok) {
     var str = asAsciiInstr(w);
     if (str) return tag + "<b>&ldquo;" + esc(str) + "&rdquo;</b> <span style=\"color:" + pal.muted + ";font-size:11px\">· string · " + w.length + " words</span>";
     for (var i = 0; i + 1 < w.length; i++) {
-        var vv = BigInt(w[i] >>> 0) + (BigInt(w[i + 1] >>> 0) << BigInt(32));
-        if (vv >= BigInt(1500000000000) && vv <= BigInt(2500000000000)) {
-            var ds = vv.toString(); try { ds = new Date(Number(vv)).toISOString().replace("T", " ").slice(0, 19) + "Z"; } catch (e) {}
-            var bt = (t.timestamp && vv === BigInt(t.timestamp)) ? ' <span style="color:' + pal.muted + '">· = block time</span>' : "";
+        var vv = u64num(w, i);
+        if (vv >= 1500000000000 && vv <= 2500000000000) {
+            var ds = String(vv); try { ds = new Date(vv).toISOString().replace("T", " ").slice(0, 19) + "Z"; } catch (e) {}
+            var bt = (t.timestamp && vv === Number(t.timestamp)) ? ' <span style="color:' + pal.muted + '">· = block time</span>' : "";
             var pos = i ? ' <span style="color:' + pal.muted + '">(words ' + i + "-" + (i + 1) + ")</span>" : "";
             return tag + "<b>u64</b> " + esc(ds) + ' <span style="color:' + pal.muted + '">timestamp</span>' + bt + pos + " " + raw;
         }
@@ -487,18 +613,18 @@ function r0def(w) {
     var nw = Math.ceil(len / 4); if (2 + nw + 4 !== w.length) return null;
     var name = r0str(w, 1); if (!name || name.length !== len || !/^[\x20-\x7e]+$/.test(name)) return null;
     var r = w.slice(2 + nw); if (((r[2] | r[3]) >>> 0) !== 0 || !((r[0] | r[1]) >>> 0)) return null;
-    return { name: name, supply: (BigInt(r[0] >>> 0) | (BigInt(r[1] >>> 0) << BigInt(32))).toString() };
+    return { name: name, supply: u64le(r, 0) };
 }
 
 // ── corpus-inferred field layout ─────────────────────────────────────────────
 function b58(bytes) {
-    var A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    var n = BigInt(0); for (var i = 0; i < bytes.length; i++) n = n * BigInt(256) + BigInt(bytes[i] >>> 0);
-    var s = ""; while (n > BigInt(0)) { s = A[Number(n % BigInt(58))] + s; n /= BigInt(58); }
+    var n = [0]; for (var i = 0; i < bytes.length; i++) bnMulAddSmall(n, 256, bytes[i] >>> 0);
+    var s = bnToBase58(n);
     for (var j = 0; j < bytes.length; j++) { if ((bytes[j] >>> 0) === 0) s = "1" + s; else break; }
     return s || "1";
 }
-function leInt(w, off, len) { var n = BigInt(0); for (var k = 0; k < len; k++) n += BigInt(w[off + k] >>> 0) << (BigInt(8) * BigInt(k)); return n; }
+// little-endian bytes -> decimal string
+function leInt(w, off, len) { var n = [0]; for (var k = len - 1; k >= 0; k--) bnMulAddSmall(n, 256, (w[off + k] || 0) >>> 0); return bnToString(n); }
 function hexOf(w, off, len) { return w.slice(off, off + len).map(function (x) { var h = (x >>> 0).toString(16); return h.length < 2 ? "0" + h : h; }).join(""); }
 function inferLayout(samples) {
     samples = (samples || []).filter(function (w) { return w && w.length && w.every(function (x) { return (x >>> 0) <= 255; }); });
@@ -729,9 +855,8 @@ function finTip(t) {
 // hex chars. Ported from the web dashboard.
 function hexToB58(h) {
     if (!/^[0-9a-f]{64}$/.test(h)) return "";
-    var AL = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    var n = BigInt("0x" + h), out = "";
-    while (n > BigInt(0)) { out = AL[Number(n % BigInt(58))] + out; n = n / BigInt(58); }
+    var n = [0]; for (var k = 0; k < h.length; k += 2) bnMulAddSmall(n, 256, parseInt(h.slice(k, k + 2), 16));
+    var out = bnToBase58(n);
     for (var i = 0; i + 1 < h.length && h[i] === "0" && h[i + 1] === "0"; i += 2) out = "1" + out;
     return out || "1";
 }
@@ -770,10 +895,30 @@ function txAction(t) {
         if (v === 2) return "Burn " + (amtS ? amtS + " " : "") + (tok ? esc(tok) + " " : "") + "via ATA"; }
     if (name === "token") { var tv = w[0] >>> 0;
         if (tv === 0) return "Transfer " + (amtS ? amtS + " " : "") + (tok ? esc(tok) : "tokens") + ft;
-        if (tv === 1) return "Create token " + (tok ? esc(tok) : "") + (amtS ? " · supply " + amtS : "");
+        if (tv === 1) { var cn = tok || r0str(w, 1); return ("Create token " + (cn ? esc(cn) : "") + (amtS ? " · supply " + amtS : "")).replace(/ +·/, " ·"); }
         if (tv === 3) return "Initialize " + (tok ? esc(tok) + " " : "") + "token account";
         if (tv === 4) return "Burn " + (amtS ? amtS + " " : "") + (tok ? esc(tok) : "tokens");
-        if (tv === 5) return "Mint " + (amtS ? amtS + " " : "") + (tok ? esc(tok) : "tokens"); }
+        if (tv === 5) return "Mint " + (amtS ? amtS + " " : "") + (tok ? esc(tok) : "tokens");
+        if (dialectOf(t.program) === "v024") {
+            if (tv === 6) return "Mint " + (amtS ? amtS + " " : "") + (tok ? esc(tok) : "tokens") + " (with authority)" + (a[1] ? " to " + accShort(a[1]) : "");
+            if (tv === 7) return "Print NFT";
+            if (tv === 8 || tv === 9) return ((w[1] >>> 0) === 1) ? "Set mint authority" : "Renounce mint authority"; } }
+    if (name === "amm" && dialectOf(t.program) === "v024") { var xv = w[0] >>> 0, xn = function (i) { return grp(u128le(w, i)); };
+        if (xv === 0) return "Initialize AMM" + (w.length >= 69 ? " · swap fee " + bps(u128le(w, 61)) : "");
+        if (xv === 1) return "Update AMM config";
+        if (xv === 2) return "Create price observations";
+        if (xv === 3) return "Create oracle price account";
+        if (xv === 4 && w.length >= 11) return "Create pool · " + xn(1) + " + " + xn(5);
+        if (xv === 5 && w.length >= 15) return "Add liquidity · up to " + xn(5) + " + " + xn(9);
+        if (xv === 6 && w.length >= 15) return "Remove liquidity · " + xn(1) + " LP";
+        if (xv === 7 && w.length >= 11) return "Swap " + xn(1) + " in · min " + xn(5) + " out";
+        if (xv === 8 && w.length >= 11) return "Swap for " + xn(1) + " out · max " + xn(5) + " in";
+        if (xv === 9) return "Sync reserves";
+        if (xv === 10 && w.length >= 5) return "Withdraw protocol fees · " + xn(1); }
+    if (name === "twap_oracle") { var ov = w[0] >>> 0;
+        var on = ["Create price observations","Create oracle price account","Create current tick","Update current tick","Publish price","Record tick"][ov];
+        if (on) return on + (((ov === 4 || ov === 5) && w.length >= 15) ? " · source " + accShort(r0str(w, 1)) : ""); }
+    if (name === "token_mint_authority" && (w[0] >>> 0) === 0) return "Faucet mint " + grp(FAUCET_MINT_AMOUNT) + " " + (tok ? esc(tok) : "tokens") + (a[2] ? " to " + accShort(a[2]) : "");
     if (name === "authenticated_transfer") {
         // rc5 wraps native in an ENUM: [0, u128] = Transfer (amount at w1, 5 words) and the
         // 1-word [1] = CreateAccount. rc3/rc4 is a BARE u128 (4 words): all-zero = Register,
@@ -781,7 +926,7 @@ function txAction(t) {
         // into the low limb, which showed a 1-LEZ transfer as 2^32. Prefer the server-decoded
         // amount (amtS) - it already handles both shapes - and only fall back to local words.
         if (w.length === 1 && (w[0] >>> 0) === 1) return "Register native account" + (a[0] ? " " + accShort(a[0]) : "");
-        if (w.length === 4 && u128le(w, 0) === BigInt(0)) return "Register native account" + (a[0] ? " " + accShort(a[0]) : "");
+        if (w.length === 4 && u128le(w, 0) === "0") return "Register native account" + (a[0] ? " " + accShort(a[0]) : "");
         var na = amt != null ? amtS
             : (w.length === 5 && (w[0] >>> 0) === 0 ? grp(u128le(w, 1).toString())
             : (w.length >= 4 ? grp(u128le(w, 0).toString()) : ""));

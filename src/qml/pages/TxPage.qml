@@ -37,7 +37,7 @@ Item {
     property int layoutTick: 0        // an inference can RESOLVE to null; only a tick reports that
     // Programs whose instructions decode from a hand-written branch in instrText(). Hoisted out
     // of refineInstruction() because the render binding has to re-apply the same guard.
-    readonly property var builtinProgs: ["token","amm","clock","pinata","pinata_token","ata","authenticated_transfer","privacy_preserving_circuit"]
+    readonly property var builtinProgs: ["token","amm","clock","pinata","pinata_token","ata","authenticated_transfer","privacy_preserving_circuit","twap_oracle","token_mint_authority"]
 
     readonly property string instrHtml: {
         page.rev;         // SCHEMAS/PROGS are module-level JS the binding engine cannot observe

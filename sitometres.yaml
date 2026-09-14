@@ -21,7 +21,7 @@ steps:
       # QQuickItem's FINAL `z` and never loaded in any build; the old Loader showed an empty
       # rectangle instead of saying so.
       state: "root.pageError === '' && root.navType === 'home'"
-      text: ["v0.3.3", "Latest Transactions", "Zones"]
+      text: ["v0.3.4", "Latest Transactions", "Zones"]
 
   - name: the home feed's first page request resolves
     # Regression for the cold-open latch: the first getTxsQuery used to be sent before the
@@ -76,6 +76,17 @@ steps:
     expect:
       state: "root.navType === 'tx' && root.pageError === '' && root.canBack"
       text: ["Txn Hash", "Visibility", "Transaction"]
+
+  - name: the transaction's instruction decodes
+    # The QML engine has no BigInt, and every u64/u128 read in theme.js used to throw inside
+    # instrText; TxPage swallowed the throw, so the Instruction row was silently absent for
+    # every token transfer and every amount. theme.js carries its own integer arithmetic now.
+    # A transaction that carries instruction words must render a non-empty decode.
+    waitFor:
+      state: >-
+        (function () { var p = root.pageCache['tx|' + root.navChannel + '|' + root.navId];
+          return !!p && p.loaded && !!p.tx && (!(p.tx.instruction_data && p.tx.instruction_data.length) || p.instrHtml.length > 0); })()
+    timeout: 20s
 
   - name: back returns home and leaves a forward entry
     click: "←"
