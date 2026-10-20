@@ -156,11 +156,15 @@ Item {
                     id: body; width: parent.width
                     Phead {
                         title: page.seq && page.seq.data_channel ? "Channel" : "Sequencer"
-                        RichLabel { explorer: page.explorer; text: ZT.chanLabel(page.seq.channel, page.seq.channel_short); font.pixelSize: 13 }
+                        // NoWrap: inside a Row the label has no width to wrap against, so the
+                        // default WordWrap broke an aliased name ("Paradox Computer 7777…") onto
+                        // four lines that spilled out of the 46px header.
+                        RichLabel { explorer: page.explorer; text: ZT.chanLabel(page.seq.channel, page.seq.channel_short); font.pixelSize: 13
+                            wrapMode: Text.NoWrap }
                         ZBadge { visible: ZT.dataBadge(page.seq); fontPx: 10; text: "DATA"
                             bg: ZTheme.verBadge.data.bg; fg: ZTheme.verBadge.data.fg; bd: ZTheme.verBadge.data.bg }
                         ZBadge { visible: !!page.seq.version; fontPx: 10
-                            property var vc: ZTheme.verBadge[page.seq.version] || ZTheme.verUnknown
+                            property var vc: ZTheme.verBadge[ZT.verKey(page.seq.version)] || ZTheme.verUnknown
                             text: (page.seq.version || "").toUpperCase(); bg: vc.bg; fg: vc.fg; bd: vc.bg }
                         Text { property var cb: (page.rev, ZT.consBadge(page.seq)); visible: !!cb
                             text: cb ? cb.text : ""; color: cb && cb.ok ? ZTheme.green : ZTheme.red

@@ -321,14 +321,24 @@ Rectangle {
                           root.searchNote = "Search failed: " + (t.error || "zonescan did not answer");
                           return;
                       }
-                      // 32 bytes of hex spell the same key an account id spells in base58, so
-                      // offer that reading before giving up. hexToB58 always answers for
-                      // 64 lowercase hex, which is why there is no further fallback here.
-                      root.navWallet(ZT.hexToB58(h), null);
+                      // a PROGRAM id is also 64 hex (a v0.3 built-in's address resolves to its
+                      // NAME, which is how its transactions are stored). Then 32 bytes of hex
+                      // spell the same key an account id spells in base58, so offer that reading
+                      // before giving up. hexToB58 always answers for 64 lowercase hex, which is
+                      // why there is no further fallback here.
+                      root.searching = true;
+                      root.findProgram(ZT.PROGS[h] || h, function () { root.searching = false; root.navWallet(ZT.hexToB58(h), null); });
                   },
                   function (e) { root.searching = false; root.searchNote = "Search failed: " + (e || "zonescan did not answer."); });
             return;
         }
+        // a v0.3 program is called at an account address, which wallets print in base58
+        var hx = ZT.b58ToHex(v);
+        if (hx) { root.findProgram(ZT.PROGS[hx] || hx, function () { root.searchWhatIs(v); }); return; }
+        root.searchWhatIs(v);
+    }
+    function searchWhatIs(v) {
+        root.searching = true;
         watch(backend.whatIs(v),
               function (r) {
                   root.searching = false;
@@ -338,6 +348,25 @@ Rectangle {
                   root.searchNote = "Search failed: " + ((r && r.error) || "zonescan did not answer");
               },
               function (e) { root.searching = false; root.searchNote = "Search failed: " + (e || "zonescan did not answer."); });
+    }
+    // Opens the program page in the first tracked zone that has the program - one with calls, or
+    // on v0.3 the zone that deployed it (a fresh program has a deploy and no calls yet). The
+    // program endpoint only reports a deploy for a given channel, hence one query per zone.
+    // Calls `none()` when no zone knows it, or the first time a zone fails to answer.
+    function findProgram(id, none) {
+        var sq = ((backend && backend.state && backend.state.sequencers) || []).map(function (s) { return s.channel; });
+        function step(i) {
+            if (i >= sq.length) { none(); return; }
+            root.watch(backend.getProgramQuery(id, "channel=" + encodeURIComponent(sq[i])),
+                  function (d) {
+                      if (d && d.ok && ((d.tx_count || 0) > 0 || (d.deployed && d.deployed.length))) {
+                          root.searching = false; root.navProgram(sq[i], id); return;
+                      }
+                      step(i + 1);
+                  },
+                  function () { none(); });
+        }
+        step(0);
     }
 
     // ── settings: which zonescan node to read from ──────────────────────────

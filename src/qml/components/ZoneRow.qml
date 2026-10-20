@@ -30,7 +30,7 @@ Rectangle {
     readonly property var cons: ZT.consBadge(root.seq)
     readonly property var act: ZT.activityChip(root.seq)
     readonly property var settle: ZT.settleBadge(root.seq)
-    readonly property var verC: ZTheme.verBadge[root.seq.version] || ZTheme.verUnknown
+    readonly property var verC: ZTheme.verBadge[ZT.verKey(root.seq.version)] || ZTheme.verUnknown
 
     MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
         onClicked: { root.forceActiveFocus(); root.clicked(); } }

@@ -28,8 +28,10 @@ Rectangle {
     // fixes, and collapsing them blamed the user's chain for a zonescan outage.
     property bool decodeFailed: false
     property string decodeError: ""
-    // Established from a full first batch; see ZT.clockOnlyIsSkippable.
-    property bool skipClockOnly: false
+    // How many system transactions every block carries (v0.3: the clock tick and the fee
+    // distribution), so a block holding no more is skipped; 0 uploads everything. Established
+    // from a full first batch; see ZT.systemTxsPerBlock.
+    property int sysPerBlock: 0
 
     signal txsUpdated()
 
@@ -44,7 +46,7 @@ Rectangle {
     function reset() {
         walkToken++;
         status = "idle"; channel = ""; tip = 0; scanned = 0;
-        reachedGenesis = false; txs = []; errorText = ""; skipClockOnly = false;
+        reachedGenesis = false; txs = []; errorText = ""; sysPerBlock = 0;
         decodeFailed = false; decodeError = "";
         root.txsUpdated();
     }
@@ -112,12 +114,13 @@ Rectangle {
                 root.scanned += all.length; st.low = lo;
 
                 // Upload only blocks that could carry something displayable. On a chain proven
-                // to tick a clock every block, a single-transaction block IS that tick.
+                // to write the same system transactions into every block, a block holding no
+                // more than those IS just those.
                 var send = [];
                 for (var i = 0; i < all.length; i++) {
-                    if (!root.skipClockOnly) { send.push(all[i]); continue; }
+                    if (!root.sysPerBlock) { send.push(all[i]); continue; }
                     var n = ZT.blockTxCount(all[i]);
-                    if (n === null || n > 1) send.push(all[i]);
+                    if (n === null || n > root.sysPerBlock) send.push(all[i]);
                 }
                 if (!send.length) { st.batchIdx++; root.walkStep(st); return; }
 
@@ -136,17 +139,17 @@ Rectangle {
                         var decoded = res.blocks || [];
                         var ok = [];
                         for (var j = 0; j < decoded.length; j++) if (decoded[j] && decoded[j].ok) ok.push(decoded[j]);
-                        if (st.batchIdx === 0) root.skipClockOnly = ZT.clockOnlyIsSkippable(send, ok);
+                        if (st.batchIdx === 0) root.sysPerBlock = ZT.systemTxsPerBlock(send, ok);
 
-                        // Clock ticks only from the newest batch: they are the bulk of an idle
+                        // System ticks only from the newest batch: they are the bulk of an idle
                         // chain and would swamp memory without adding anything to show.
                         var keepClock = st.batchIdx === 0;
                         for (var k = 0; k < ok.length; k++) {
                             var b = ok[k], keep = [];
                             for (var m = 0; m < (b.txs || []).length; m++) {
                                 var t = b.txs[m];
-                                if (ZT.progName(t.program) !== "clock") st.real++;
-                                if (keepClock || ZT.progName(t.program) !== "clock") keep.push(t);
+                                if (!ZT.isSystemTx(t)) st.real++;
+                                if (keepClock || !ZT.isSystemTx(t)) keep.push(t);
                             }
                             if (keep.length) { var c = {}; for (var p in b) c[p] = b[p]; c.txs = keep; st.collected.push(c); }
                         }

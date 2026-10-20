@@ -30,7 +30,7 @@ Item {
         var out = [], src = localPanelTxs;
         for (var i = 0; i < src.length; i++) {
             var t = src[i];
-            if (!ZT.fltTypeList().length && ZT.progName(t.program) === "clock") continue;
+            if (!ZT.fltTypeList().length && ZT.isSystemTx(t)) continue;
             if (ZT.filterMatches(t)) out.push(t);
         }
         return out;

@@ -417,6 +417,13 @@ QtObject {
         raw:                     { bg:"#2b2711", fg:"#fde047", bd:"#5c4413" },
         other:                   { bg:"#212126", fg:"#b0b0ba", bd:"#35353b" },
         guess:                   { bg:"#1c1c21", fg:"#a1a1ab", bd:"#33333a" },
+        // LEZ v0.3 built-ins, mirroring lightTy: each borrows the hue of the v0.2 type it replaces.
+        native_token:            { bg:"#0d2233", fg:"#7dd3fc", bd:"#17466b" },
+        fee:                     { bg:"#232329", fg:"#a1a1aa", bd:"#3a3a41" },
+        bridge:                  { bg:"#1a1e3d", fg:"#a5b4fc", bd:"#2f3878" },
+        bridge_lock:             { bg:"#1a1e3d", fg:"#a5b4fc", bd:"#2f3878" },
+        sequencer_stake:         { bg:"#1a1e3d", fg:"#a5b4fc", bd:"#2f3878" },
+        program_loader:          { bg:"#33210f", fg:"#fdba74", bd:"#59380f" },
     })
 
     readonly property var darkVis: ({
@@ -452,6 +459,8 @@ QtObject {
         rc5:   { bg:"#1a1e3d", fg:"#a5b4fc" },
         rc4:   { bg:"#10241a", fg:"#86efac" },
         rc3:   { bg:"#2e2410", fg:"#fcd34d" },
+        // every stock vX.Y.Z release (ZT.verKey maps the version string here): the teal pair
+        v0:    { bg:"#0d2622", fg:"#5eead4" },
         data:  { bg:"#2b2711", fg:"#fde047" },
     })
 

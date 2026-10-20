@@ -34,8 +34,15 @@ Item {
     readonly property var schema: { page.rev; return (ZT.SCHEMAS && ZT.SCHEMAS[page.progId]) ? ZT.SCHEMAS[page.progId] : null; }
     readonly property bool isCustom: /^[0-9a-f]{64}$/i.test(page.progId)
     readonly property bool hasName: { page.rev; return !!(ZT.PROGS && ZT.PROGS[page.progId]); }
+    // LEZ v0.3 instructions are Borsh bytes, which the risc0-word schema form cannot read
+    readonly property bool zoneV03: { page.rev; return ZT.zoneIsV03(page.channel); }
+    // a v0.3 program lives at an account address, which wallets print in base58
+    readonly property string b58: page.isCustom ? ZT.hexToB58(page.progId.toLowerCase()) : ""
 
     property string txCount: "…"
+    // LEZ v0.3: the deploy that installed this program ({hash, block_id, image_id, bytecode_len}),
+    // latest first, from /api/program. Empty for built-ins and for programs deployed elsewhere.
+    property var deployed: []
 
     // ── schema form output: STRUCTURED STATE, rendered by two bindings ───────────
     // These were 17 HTML strings built inside doPreview()/doSubmit() and their async callbacks.
@@ -192,10 +199,14 @@ Item {
     function reload() {
         if (!backend || !explorer.ready) return;   // re-issued from Main.qml when ready flips
         resetFeed();
-        txCount = "…";
-        // exact per-program total from the indexed /api/program (no scan).
+        txCount = "…"; deployed = [];
+        // exact per-program total from the indexed /api/program (no scan), and on v0.3 where
+        // the program was deployed.
         explorer.watch(backend.getProgramQuery(page.progId, "channel=" + encodeURIComponent(page.channel)),
-            function (d) { page.txCount = (d && d.ok) ? ZT.num(d.tx_count) : "-"; },
+            function (d) {
+                page.txCount = (d && d.ok) ? ZT.num(d.tx_count) : "-";
+                page.deployed = (d && d.ok && d.deployed) ? d.deployed : [];
+            },
             function () { page.txCount = "-"; });
     }
 
@@ -289,7 +300,9 @@ Item {
                     id: ovwCol; width: parent.width
                     Phead {
                         title: "Program"
-                        RichLabel { explorer: page.explorer; text: page.nameHtml
+                        // NoWrap, as on the zone page: in a header Row there is no width to wrap
+                        // against, and "≈ name" split onto two lines
+                        RichLabel { explorer: page.explorer; text: page.nameHtml; wrapMode: Text.NoWrap
                             color: ZTheme.soft; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                     }
                     // .ovw 3-tile grid (1px gaps over the line color, bottom border)
@@ -337,6 +350,25 @@ Item {
                         KvRowRich { width: parent.width; visible: !!page.g; explorer: page.explorer
                             k: (page.g && page.g.generic) ? "Shape" : "Name"; vHtml: page.gHtml }
                         KvRow { width: parent.width; k: "Program id"; v: page.progId }
+                        KvRow { width: parent.width; k: "Address"; visible: page.b58 !== ""; v: page.b58 }
+                        KvRowRich { width: parent.width; k: "Deployed in"; explorer: page.explorer
+                            visible: page.deployed.length > 0
+                            vHtml: {
+                                var dd = page.deployed[0]; if (!dd) return "";
+                                return '<a href="tx:' + ZT.u(page.channel) + ':' + ZT.u(dd.hash) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.sh(dd.hash, 8, 6)) + "</a> · block #" + ZT.num(dd.block_id)
+                                     + (page.deployed.length > 1 ? ' <span style="color:' + ZTheme.muted + '">(' + page.deployed.length + " deploys, latest shown)</span>" : "");
+                            } }
+                        KvRow { width: parent.width; k: "Image ID"
+                            visible: !!(page.deployed[0] && page.deployed[0].image_id)
+                            v: page.deployed[0] && page.deployed[0].image_id ? page.deployed[0].image_id : "" }
+                        KvRowRich { width: parent.width; k: "Guest ELF"; explorer: page.explorer
+                            visible: !!(page.deployed[0] && page.deployed[0].bytecode_len)
+                            vHtml: {
+                                var dd = page.deployed[0]; if (!dd || !dd.bytecode_len) return "";
+                                var href = ZT.elfHref(dd.hash, page.channel), size = ZT.num(dd.bytecode_len) + " bytes";
+                                return href ? (size + ' · <a href="' + href + '" style="color:' + ZTheme.link + '">download .elf</a>')
+                                            : (size + ' <span style="color:' + ZTheme.muted + '">· download unavailable (no zonescan origin)</span>');
+                            } }
                     }
                 }
             }
@@ -368,7 +400,7 @@ Item {
 
             // ── instruction schema (ABI) — propose form (unresolved custom program) ──
             Rectangle {
-                visible: !page.schema && page.isCustom
+                visible: !page.schema && page.isCustom && !page.zoneV03
                 width: parent.width; height: propCol.implicitHeight
                 color: ZTheme.panel; radius: 12; border.width: 1; border.color: ZTheme.line; clip: true
                 Column {
@@ -420,7 +452,7 @@ Item {
                     }
                 }
             }
-            Item { width: 1; height: 16; visible: !!page.schema || page.isCustom }
+            Item { width: 1; height: 16; visible: !!page.schema || (page.isCustom && !page.zoneV03) }
 
             // ── transactions feed ──
             Rectangle {

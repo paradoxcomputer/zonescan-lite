@@ -24,12 +24,12 @@ toolchain, `repc`, and the test framework all come from the flake.
 
 **From the Paradox Computer repository** — the normal way, and the one to give users:
 
-1. Open **Logos Basecamp** → **Settings → Repositories → Add a repository**.
+1. Open **Logos Basecamp** → **Settings** (the gear at the bottom of the sidebar) → **Package Repositories** → **Add a repository**.
 2. Paste:
    ```
    https://paradoxcomputer.github.io/logos-modules/repo.json
    ```
-3. Open the **Package Manager**, find **ZoneScan Lite**, and **Install**.
+3. Open **Applications** (or the **Package Manager**), find **ZoneScan Lite**, and **Install**.
 4. Launch it from the sidebar.
 
 It has no dependencies — nothing else is pulled in — and Basecamp picks the build for your

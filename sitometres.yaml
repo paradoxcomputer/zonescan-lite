@@ -21,7 +21,7 @@ steps:
       # QQuickItem's FINAL `z` and never loaded in any build; the old Loader showed an empty
       # rectangle instead of saying so.
       state: "root.pageError === '' && root.navType === 'home'"
-      text: ["v0.3.4", "Latest Transactions", "Zones"]
+      text: ["v0.4.0", "Latest Transactions", "Zones"]
 
   - name: the home feed's first page request resolves
     # Regression for the cold-open latch: the first getTxsQuery used to be sent before the
@@ -65,7 +65,7 @@ steps:
     # alias names a channel, it does not replace its identity.
     expect:
       text:
-        - { text: "dev · shared default channel", match: contains }
+        - { text: "Logos testnet", match: contains }
         - { text: "Paradox Computer", match: contains }
 
   - name: a transaction row opens the transaction page

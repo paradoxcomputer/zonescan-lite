@@ -37,13 +37,17 @@ Item {
     property int layoutTick: 0        // an inference can RESOLVE to null; only a tick reports that
     // Programs whose instructions decode from a hand-written branch in instrText(). Hoisted out
     // of refineInstruction() because the render binding has to re-apply the same guard.
-    readonly property var builtinProgs: ["token","amm","clock","pinata","pinata_token","ata","authenticated_transfer","privacy_preserving_circuit","twap_oracle","token_mint_authority"]
+    readonly property var builtinProgs: ["token","amm","clock","pinata","pinata_token","ata","authenticated_transfer","privacy_preserving_circuit","twap_oracle","token_mint_authority",
+        "native_token","fee","bridge","bridge_lock","sequencer_stake","program_loader","cross_zone_inbox","cross_zone_outbox","wrapped_token"]
 
     readonly property string instrHtml: {
         page.rev;         // SCHEMAS/PROGS are module-level JS the binding engine cannot observe
         page.layoutTick;  // and a layout that resolved to null leaves `layout` untouched
         var t = page.tx;
-        if (!t || !t.instruction_data || !t.instruction_data.length) return "";
+        // LEZ v0.3 carries no instruction WORDS: a built-in's instruction arrives decoded (`instr`)
+        // and anything else as raw Borsh bytes (`instruction_hex`). instrText renders both.
+        var words = !!(t && t.instruction_data && t.instruction_data.length);
+        if (!t || !(words || t.instr || t.instruction_hex)) return "";
         // TOTAL, deliberately. theme.js's numeric decoders (u128le / u64le / leInt / b58) call
         // BigInt, and the QML engine does not have it - `typeof BigInt === "undefined"` on both
         // Qt 6.9.2 (what Basecamp runs) and 6.11.1. Any instruction needing a 64/128-bit int
@@ -60,7 +64,7 @@ Item {
             // every evaluation is what lets the authoritative decode win. Checking it once at
             // inference time would lose to the memo for the rest of the session.
             var haveSchema = !!(ZT.SCHEMAS && ZT.SCHEMAS[t.program]);
-            if (page.layout && t.program && !haveSchema
+            if (words && page.layout && t.program && !haveSchema
                 && page.builtinProgs.indexOf(ZT.progName(t.program)) < 0) {
                 var html = ZTheme.rich(ZT.renderByLayout, t.instruction_data, page.layout, t);
                 if (html) return html;
@@ -292,23 +296,55 @@ Item {
                                 }
                             }
                         }
-                        // instruction (decoded, refined async)
-                        KvRowRich { k: "Instruction"; explorer: page.explorer
+                        // instruction (decoded, refined async). On a privacy tx the decoded part is
+                        // only its effect on a public account; the rest stays private.
+                        // width: without it the RowLayout grows to its text and a long
+                        // instruction (raw v0.3 bytes) runs off the panel instead of wrapping
+                        KvRowRich { k: page.tx && page.tx.kind === "private" && page.tx.instr ? "Public effect" : "Instruction"
+                            width: parent.width; explorer: page.explorer
                             visible: page.instrHtml.length > 0
                             vHtml: page.instrHtml }
+                        // fee (LEZ v0.3): what the transaction declared, and what the block charged it
+                        KvRowRich { k: "Fee"; explorer: page.explorer; width: parent.width
+                            visible: !!(page.tx && page.tx.fee)
+                            vHtml: {
+                                var f = page.tx && page.tx.fee; if (!f) return "";
+                                var m = '<span style="color:' + ZTheme.muted + '">';
+                                var s = f.charged != null ? ("<b>" + ZT.grp(f.charged) + "</b> charged · " + m + "max " + ZT.grp(f.max_fee) + "</span>")
+                                      : (f.block_fee != null ? ("up to <b>" + ZT.grp(f.max_fee) + "</b> · " + m + "block total " + ZT.grp(f.block_fee) + " across " + ZT.num(f.block_fee_txs) + " txs</span>")
+                                      : ("up to <b>" + ZT.grp(f.max_fee) + "</b>"));
+                                if (f.tip && f.tip !== "0") s += " · tip " + ZT.grp(f.tip);
+                                if (f.gas_limit != null) s += " · " + m + "gas limit " + ZT.grp(f.gas_limit) + "</span>";
+                                if (f.payer) s += ' · paid by <a href="wallet:' + ZT.u(page.zoneId) + ':' + ZT.u(f.payer) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.sh(f.payer, 6, 4)) + "</a>";
+                                return s;
+                            } }
                         // deploys program
-                        KvRowRich { k: "Deploys program"; explorer: page.explorer
+                        KvRowRich { k: "Deploys program"; explorer: page.explorer; width: parent.width
                             visible: !!(page.tx && page.tx.deploy_program)
-                            vHtml: page.tx && page.tx.deploy_program ? ('<a href="program:' + ZT.u(page.zoneId) + ':' + ZT.u(page.tx.deploy_program) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.progShort(page.tx.deploy_program)) + "</a>") : "" }
+                            vHtml: {
+                                if (!page.tx || !page.tx.deploy_program) return "";
+                                var p = page.tx.deploy_program, b58 = ZT.hexToB58(p);
+                                return '<a href="program:' + ZT.u(page.zoneId) + ':' + ZT.u(p) + '" style="color:' + ZTheme.link + '">' + ZT.esc(ZT.progShort(p)) + "</a>"
+                                     + (b58 ? ' <span style="color:' + ZTheme.muted + '">· address ' + ZT.esc(b58) + "</span>" : "");
+                            } }
+                        // the risc0 image id of what was installed (recomputed by the server)
+                        KvRow { explorer: page.explorer; k: "Image ID"
+                            visible: !!(page.tx && page.tx.image_id)
+                            v: page.tx && page.tx.image_id ? page.tx.image_id : "" }
+                        // a v0.3 loader segment: bytecode written ahead of the deploy that installs it
+                        KvRow { explorer: page.explorer; k: "Program segment"; mono: false
+                            visible: !!(page.tx && page.tx.bytecode_len && page.tx.kind !== "deploy")
+                            v: page.tx && page.tx.bytecode_len ? (ZT.num(page.tx.bytecode_len) + " bytes of bytecode (part of a later deploy)") : "" }
                         // guest ELF — size + a real download link (opens the zonescan REST
-                        // endpoint externally; keyed by the deployed program hash).
+                        // endpoint externally). Keyed by THIS deploy transaction: the server
+                        // reassembles the ELF from its segments, and a program id answers 404.
                         KvRowRich { k: "Guest ELF"; explorer: page.explorer
-                            visible: !!(page.tx && page.tx.bytecode_len)
+                            visible: !!(page.tx && page.tx.bytecode_len && page.tx.kind === "deploy")
                             vHtml: {
                                 if (!page.tx || !page.tx.bytecode_len) return "";
                                 // elfHref resolves against the origin the BACKEND is configured for,
                                 // so pointing the module at a local zonescan repoints this link too.
-                                var href = ZT.elfHref(page.tx.deploy_program || page.tx.program || page.tx.hash);
+                                var href = ZT.elfHref(page.tx.hash, page.zoneId);
                                 var size = ZT.num(page.tx.bytecode_len) + " bytes";
                                 return href ? (size + ' · <a href="' + href + '" style="color:' + ZTheme.link + '">download .elf</a>')
                                             : (size + ' <span style="color:' + ZTheme.muted + '">· download unavailable (no zonescan origin)</span>');

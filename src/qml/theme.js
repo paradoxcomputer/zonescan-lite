@@ -43,6 +43,15 @@ var lightTy = {
     deploy:                  { bg:"#ffedd5", fg:"#c2410c", bd:"#fdba74" },
     raw:                     { bg:"#fef9c3", fg:"#854d0e", bd:"#fde68a" },
     other:                   { bg:"#f1f1f3", fg:"#52525b", bd:"#e0e0e4" },
+    // LEZ v0.3 built-ins, each sharing the hue of the v0.2 type it replaces: a native transfer
+    // reads like the old authenticated transfer, the fee tick like the clock, the loader like
+    // a deploy, and the bridge and stake programs take the indigo ATA used to have.
+    native_token:            { bg:"#e0f2fe", fg:"#075985", bd:"#bae6fd" },
+    fee:                     { bg:"#f4f4f5", fg:"#71717a", bd:"#e4e4e7" },
+    bridge:                  { bg:"#e0e7ff", fg:"#3730a3", bd:"#c7d2fe" },
+    bridge_lock:             { bg:"#e0e7ff", fg:"#3730a3", bd:"#c7d2fe" },
+    sequencer_stake:         { bg:"#e0e7ff", fg:"#3730a3", bd:"#c7d2fe" },
+    program_loader:          { bg:"#ffedd5", fg:"#c2410c", bd:"#fdba74" },
     // bd is line2, not a copy of it - the guess chip is deliberately the lowest-contrast
     // chip of the family and borrows the plain hairline.
     guess:                   { bg:"#f8fafc", fg:"#6e6e77", bd: lightPal.line2 }
@@ -66,6 +75,9 @@ var lightVer = {
     rc5:  { bg:"#e0e7ff", fg:"#3730a3" },
     rc4:  { bg:"#dcfce7", fg:"#166534" },
     rc3:  { bg:"#fef3c7", fg:"#92400e" },
+    // Every stock release ("v0.3.1", "v0.2.4", …) shares one palette. The version string is a
+    // full vX.Y.Z, so it can never be a map key of its own: verKey() maps it here.
+    v0:   { bg:"#ccfbf1", fg:"#0f766e" },
     data: { bg:"#fef9c3", fg:"#854d0e" }   // .v-data raw data channel
 };
 // ── the live token objects ───────────────────────────────────────────────────
@@ -116,6 +128,9 @@ applyPalette(lightPal, lightTy, lightVis, lightFin, lightVer);
 
 function tyOf(name) { return tyBadge[name] || tyBadge.other; }
 function visOf(kind) { return visBadge[kind] || visBadge.public; }
+// The verBadge KEY for a zone's version string. A pure string map, so callers still read
+// `ZTheme.verBadge[ZT.verKey(v)]` and keep their theme dependency.
+function verKey(v) { v = String(v || ""); return /^v0\./.test(v) ? "v0" : v; }
 
 // ── live globals (fed by the backend) ────────────────────────────────────────
 var state = null;
@@ -176,7 +191,10 @@ function sh(s, a, b) {
 // Keyed by the FULL 64-char channel id, never a prefix — 0101…0101 and 0101…0102 are
 // different channels that share their first 60 characters.
 var CHAN_ALIAS = {
-    "0101010101010101010101010101010101010101010101010101010101010101": "dev · shared default channel",
+    // Logos' own testnet zone since LEZ v0.3 (testnet.lez.logos.co, four staked sequencers
+    // taking turns). In the v0.2 era stock configs settled here, which is where the old
+    // "dev · shared default channel" name came from.
+    "0101010101010101010101010101010101010101010101010101010101010101": "Logos testnet",
     "7777777777777777777777777777777777777777777777777777777777777777": "Paradox Computer"
 };
 function normChan(ch) { return ch ? String(ch).replace(/^0x/, "").toLowerCase() : ""; }
@@ -251,13 +269,26 @@ function guessHtml(g) {
 // actually talks to rather than a copy that can drift from it.
 var ZONESCAN_BASE = "";
 function setBaseUrl(u) { if (u) ZONESCAN_BASE = String(u).replace(/\/+$/, ""); }
-function elfHref(hash) { return ZONESCAN_BASE ? (ZONESCAN_BASE + "/api/elf/" + u(hash)) : ""; }
+// Keyed by the DEPLOY TRANSACTION's hash: on LEZ v0.3 the server reassembles the ELF from that
+// deploy's segments, and a program id answers 404. The channel scopes the hash, which is not
+// unique across zones.
+function elfHref(hash, ch) {
+    if (!ZONESCAN_BASE || !hash) return "";
+    return ZONESCAN_BASE + "/api/elf/" + u(hash) + (ch ? "?channel=" + u(ch) : "");
+}
+// LEZ v0.3 zones carry Borsh instruction BYTES: the risc0-word schema tools (the propose-a-schema
+// form, inferred layouts) cannot read them, so pages hide those for such a zone.
+function zoneIsV03(ch) { var q = findSeq(ch); return !!(q && q.version && /^v0\.3/.test(String(q.version))); }
 
 // ── classification (txVis / txType / typeLabel) ──────────────────────────────
 var TYPE_LABEL = {
     clock:"Clock", token:"Token", authenticated_transfer:"Transfer", ata:"ATA", amm:"AMM",
     pinata:"Pinata", pinata_token:"Pinata Token", deploy:"Deploy", shield:"Shield", deshield:"Deshield",
     twap_oracle:"TWAP Oracle", token_mint_authority:"Mint Authority",
+    // LEZ v0.3 built-ins, stored under these names by the server
+    native_token:"Transfer", fee:"Fee", bridge:"Bridge", sequencer_stake:"Stake",
+    program_loader:"Program Loader", cross_zone_inbox:"Cross-zone In", cross_zone_outbox:"Cross-zone Out",
+    bridge_lock:"Bridge Lock", wrapped_token:"Wrapped Token", ping_sender:"Ping", ping_receiver:"Ping",
     "private-send":"Transfer", public:"Public", private:"Private", raw:"Inscription"
 };
 // ── the maintained lez-programs deployments (zonescan's LEZ_PROGRAMS_V024) ──────────────
@@ -318,9 +349,13 @@ function visBadgeFor(t) {
 
 // ── shared transactions filter (Visibility + multi-Type + Sort) ──────────────
 var FLT = { vis: "all", types: {}, sort: "newest" };   // types: set-as-object {key:true}
-var TYPE_CHIPS = [["authenticated_transfer","Transfer"],["token","Token"],["clock","Clock"],
-    ["shield","Shield"],["deshield","Deshield"],["amm","AMM"],["ata","ATA"],["pinata","Pinata"],
-    ["program","Program"],["deploy","Deploy"],["raw","Inscription"]];
+// The keys are the server's feed types. On LEZ v0.3 a public transfer is `native_token` and a
+// private one files under `authenticated_transfer`; token, amm, ata and pinata are no longer
+// built-ins, so their chips would only ever have matched nothing.
+var TYPE_CHIPS = [["native_token","Transfer"],["shield","Shield"],["deshield","Deshield"],
+    ["authenticated_transfer","Private transfer"],["bridge","Bridge"],["sequencer_stake","Stake"],
+    ["deploy","Deploy"],["program_loader","Program Loader"],["program","Program"],["clock","Clock"],
+    ["raw","Inscription"]];
 function fltTypesCount() { var n = 0; for (var k in FLT.types) if (FLT.types[k]) n++; return n; }
 function fltTypeList() { var a = []; for (var k in FLT.types) if (FLT.types[k]) a.push(k); return a; }
 function filterParams(p) {   // p: object of query params to mutate
@@ -345,7 +380,13 @@ function filterMatches(t) {
     if (fltTypesCount() && !FLT.types[typeKey(t)]) return false;
     return true;
 }
-function clockOk(t) { return !!FLT.types["clock"] || progName(t.program) !== "clock"; }
+// A transaction the sequencer itself writes into every block: the clock tick, and since LEZ
+// v0.3 the fee program's per-block Distribute. A fee REFUND is a user's money and stays visible.
+function isSystemTx(t) {
+    var n = progName(t.program);
+    return n === "clock" || (n === "fee" && !!(t.instr && t.instr._variant === "Distribute"));
+}
+function clockOk(t) { return !!FLT.types["clock"] || !isSystemTx(t); }
 function fltSort() { return FLT.sort === "oldest" ? "oldest" : "newest"; }
 // A stable signature of the CURRENT filter, including sort. FLT lives in this .pragma library,
 // so it is engine-wide: a page kept alive in the router's cache can be re-shown after the
@@ -462,10 +503,70 @@ function fmtSchema(v) {
 }
 function decodeBySchema(w, schema) { try { return fmtSchema(r0dec(w, schema, 0).v); } catch (e) { return null; } }
 
+// ── LEZ v0.3: the server decodes each built-in's Borsh instruction with its own enum and
+// sends it as `instr` ({_variant, field: …}); amounts arrive as decimal strings. Anything
+// without a hand-written line below still reads through fmtSchema, never as raw bytes.
+function instrV03(t) {
+    var I = t.instr || {}, v = I._variant, name = progName(t.program), a = t.accounts || [];
+    var acc = function (s) { return s ? '<a href="wallet:' + u(t.channel) + ':' + u(s) + '" style="color:' + pal.link + '">' + esc(sh(s, 6, 4)) + "</a>" : ""; };
+    var mut = function (s) { return '<span style="color:' + pal.muted + '">' + s + "</span>"; };
+    var mono = function (s) { return '<span style="font-family:monospace;font-size:11px">' + esc(sh(s, 8, 6)) + "</span>"; };
+    var B = function (x) { return "<b>" + grp(x) + "</b>"; };
+    var nat = ' <span style="color:' + pal.muted + ';font-size:11px">(native)</span>';
+    var last = a.length > 1 ? a[a.length - 1] : "";
+    // a privacy tx's `instr` is its PUBLIC effect: the native debit (shield) or credit (deshield)
+    if (t.kind === "private") {
+        if (v === "Debit") return "<b>Debit</b> " + B(I.amount) + nat + (a.length === 1 ? " · from " + acc(a[0]) : "") + " " + mut("into private balances");
+        if (v === "Credit") return "<b>Credit</b> " + B(I.amount) + nat + " " + mut("out of private balances, to a public account");
+    }
+    if (name === "native_token" && v === "Transfer")
+        return "<b>Transfer</b> " + B(I.amount) + nat + (a[0] ? " · from " + acc(a[0]) : "") + (last ? " → to " + acc(last) : "");
+    if (name === "bridge") {
+        if (v === "Deposit") return "<b>Deposit</b> " + B(I.amount) + nat + " · from the L1" + (I.recipient ? " → to " + acc(I.recipient) : "") + (I.l1_deposit_op_id ? " · L1 op " + mono(I.l1_deposit_op_id) : "");
+        if (v === "Withdraw") return "<b>Withdraw</b> " + B(I.amount) + nat + (a[0] ? " · from " + acc(a[0]) : "") + " → to the L1" + (I.l1_recipient ? " key " + mono(I.l1_recipient) : "");
+    }
+    if (name === "fee") {
+        if (v === "Distribute") return "<b>Distribute</b> - payout " + B(I.payout) + " · base revenue " + B(I.revenue_base) + " · tips " + B(I.revenue_tip) + " " + mut("· gas used " + grp(I.gas_used_exec) + " exec / " + grp(I.gas_used_stor) + " storage");
+        if (v === "Refund") return "<b>Refund</b> " + B(I.amount) + nat + (a[1] ? " → to " + acc(a[1]) : "");
+    }
+    if (name === "clock" && v === "Tick") {
+        var ms = Number(I.timestamp), when = "";
+        try { if (ms > 1e12 && ms < 4e12) when = " · " + new Date(ms).toISOString().replace("T", " ").slice(0, 19) + "Z"; } catch (e) {}
+        return "<b>Tick</b> - block #" + num(I.block_id) + (when || (ms === 0 ? " " + mut("(genesis, no time yet)") : ""));
+    }
+    if (name === "sequencer_stake") {
+        var key = I.sequencer_key ? " · sequencer key " + mono(I.sequencer_key) : "";
+        if (v === "Stake") return "<b>Stake</b> " + B(I.amount) + key;
+        if (v === "UnstakeRequest") return "<b>UnstakeRequest</b> " + B(I.amount) + key + (I.destination ? " → to " + acc(I.destination) : "");
+        if (v === "FinalizeUnstake") return "<b>FinalizeUnstake</b> " + B(I.amount) + key;
+        if (v === "Slash") return "<b>Slash</b> " + B(I.amount) + " burned" + key;
+        if (v === "InitChannelParams") return "<b>InitChannelParams</b> - minimum stake " + B(I.minimum_sequencer_stake) + " · posting timeframe " + grp(I.posting_timeframe) + " slots · posting timeout " + grp(I.posting_timeout) + " slots";
+    }
+    if (name === "program_loader") {
+        if (v === "WriteSegment") return "<b>WriteSegment</b> - " + B(I.bytes) + " bytes of bytecode " + mut("(one part of a program; the deploy that follows installs it)");
+        if (v === "CreateHeader" || v === "UpdateHeader") {
+            var p = t.deploy_program ? '<a href="program:' + u(t.channel) + ':' + u(t.deploy_program) + '" style="color:' + pal.link + '">' + esc(progShort(t.deploy_program)) + "</a>" : "a program";
+            return "<b>" + v + "</b> - " + (v === "UpdateHeader" ? "updates " : "deploys ") + p + " · " + (I.immutable ? "immutable" : "upgradable");
+        }
+    }
+    return fmtSchema(I);
+}
+// A deployed (non-built-in) program's instruction: Borsh bytes the server cannot name. An enum's
+// variant is its leading byte, which is the one thing worth reading out of them.
+function instrHexText(t) {
+    var hx = String(t.instruction_hex || ""); if (hx.length < 2) return "";
+    // grouped in 4-byte words: one unbroken run of hex has nowhere to wrap, and ran off the panel
+    var show = (hx.length > 192 ? hx.slice(0, 192) : hx).replace(/(.{8})(?=.)/g, "$1 ") + (hx.length > 192 ? " …" : "");
+    return "<b>variant " + parseInt(hx.slice(0, 2), 16) + "</b> · "
+         + '<span style="color:' + pal.muted + '">' + num(hx.length / 2) + " bytes, raw</span> "
+         + '<span style="font-family:monospace;font-size:11px">' + esc(show) + "</span>";
+}
+
 // ── instrText: the rich instruction line (ported verbatim) ───────────────────
 // tok (optional) = resolved token_of for the holding account (token standard).
 function instrText(t, tok) {
-    var w = t.instruction_data || []; if (!w.length) return "";
+    if (t.instr && t.instr._variant) return instrV03(t);
+    var w = t.instruction_data || []; if (!w.length) return instrHexText(t);
     if (t.program && SCHEMAS[t.program]) { var d = decodeBySchema(w, SCHEMAS[t.program]); if (d) return d; }
     var name = PROGS[t.program] || t.program, a = t.accounts || [];
     var acc = function (i) { return a[i] ? '<a href="wallet:' + u(t.channel) + ':' + u(a[i]) + '" style="color:' + pal.link + '">' + esc(sh(a[i], 6, 4)) + "</a>" : ""; };
@@ -774,37 +875,47 @@ var LOCAL_FIRST_BATCH = 150; // small first read so the newest rows land quickly
 var LOCAL_BATCH = 2000;      // then go wide (the decode endpoint caps a request at 2048)
 var LOCAL_MAX_BLOCKS = 20000;
 
-// A block's transaction count without decoding it. Borsh lays the header out at a fixed size
-// (block_id u64, two 32-byte hashes, timestamp u64, 64-byte signature = 144 bytes) and the
-// body's Vec length follows as a u32 LE at byte 144. So the first ~148 bytes answer "could
-// this block hold anything but a clock tick?", which decides whether it is worth uploading.
-// Returns null when the prefix cannot be read, and callers treat null as "send it".
+// A block's transaction count without decoding it. Borsh lays the LEZ v0.3 header out at a
+// fixed size (block_id u64, two 32-byte hashes, timestamp u64 = 80 bytes; v0.2's trailing
+// 64-byte signature is gone) and the body's Vec length follows as a u32 LE at byte 80. So the
+// first ~84 bytes answer "could this block hold anything but the system ticks?", which decides
+// whether it is worth uploading. Returns null when the prefix cannot be read, and callers treat
+// null as "send it".
+var BLOCK_HEADER_LEN = 80;
 function blockTxCount(b64) {
     try {
         var head = b64.length > 200 ? b64.slice(0, 200) : b64;
-        var bin = atobPoly(head);
-        if (bin.length < 148) return null;
-        return ((bin.charCodeAt(144)) | (bin.charCodeAt(145) << 8) |
-                (bin.charCodeAt(146) << 16) | (bin.charCodeAt(147) << 24)) >>> 0;
+        var bin = atobPoly(head), o = BLOCK_HEADER_LEN;
+        if (bin.length < o + 4) return null;
+        return ((bin.charCodeAt(o)) | (bin.charCodeAt(o + 1) << 8) |
+                (bin.charCodeAt(o + 2) << 16) | (bin.charCodeAt(o + 3) << 24)) >>> 0;
     } catch (e) { return null; }
 }
 
-// Whether skipping single-transaction blocks is SAFE on this chain, established by observation
-// rather than assumption, against a batch that was uploaded in full:
+// How many system transactions EVERY block carries, when skipping system-only blocks is SAFE on
+// this chain; 0 when it is not. Established by observation rather than assumption, against a
+// batch that was uploaded in full:
 //   1. the header offset really does yield each block's transaction count on this build;
-//   2. every block carries exactly one clock tick, so tx_count == 1 means clock-only.
+//   2. every block carries exactly one clock tick, and the same number of system transactions
+//      in all (v0.3: the tick plus the fee program's Distribute), so a block holding no more
+//      than that holds nothing to show.
 // A chain without a per-block clock, or a build whose header differs, fails this and keeps
 // uploading everything. Getting it wrong would silently hide transactions.
-function clockOnlyIsSkippable(sentB64, decoded) {
-    if (!sentB64.length || sentB64.length !== decoded.length) return false;
+function systemTxsPerBlock(sentB64, decoded) {
+    if (!sentB64.length || sentB64.length !== decoded.length) return 0;
+    var per = -1;
     for (var i = 0; i < decoded.length; i++) {
         var txs = decoded[i].txs || [];
-        if (blockTxCount(sentB64[i]) !== txs.length) return false;
-        var clocks = 0;
-        for (var j = 0; j < txs.length; j++) if (progName(txs[j].program) === "clock") clocks++;
-        if (clocks !== 1) return false;
+        if (blockTxCount(sentB64[i]) !== txs.length) return 0;
+        var clocks = 0, sys = 0;
+        for (var j = 0; j < txs.length; j++) {
+            if (progName(txs[j].program) === "clock") clocks++;
+            if (isSystemTx(txs[j])) sys++;
+        }
+        if (clocks !== 1) return 0;
+        if (per < 0) per = sys; else if (sys !== per) return 0;
     }
-    return true;
+    return per > 0 ? per : 0;
 }
 
 // Re-tag decoded blocks onto the pseudo-zone so every existing renderer links under it.
@@ -860,6 +971,22 @@ function hexToB58(h) {
     for (var i = 0; i + 1 < h.length && h[i] === "0" && h[i + 1] === "0"; i += 2) out = "1" + out;
     return out || "1";
 }
+// base58 -> 64 hex for a 32-byte id, or "" when it is not one. A LEZ v0.3 program is called at
+// an account address, which wallets print in base58 while zonescan stores it in hex. No BigInt
+// (see the risc0 word decoders above): the number is built in 16-bit limbs.
+function b58ToHex(s) {
+    var A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    s = String(s || "");
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return "";
+    var n = [0];
+    for (var i = 0; i < s.length; i++) bnMulAddSmall(n, 58, A.indexOf(s.charAt(i)));
+    bnTrim(n);
+    var h = "";
+    if (!bnIsZero(n)) for (var j = n.length - 1; j >= 0; j--) { var x = n[j].toString(16); h += (j === n.length - 1) ? x : "0000".slice(x.length) + x; }
+    for (var k = 0; k < s.length && s.charAt(k) === "1"; k++) h = "00" + h;
+    while (h.length < 64) h = "0" + h;
+    return h.length === 64 ? h : "";
+}
 
 // MEASURED seconds-to-finality: lag in slots x observed seconds-per-slot, published by the
 // server as l1.finality_eta_secs. When the server has not observed the rate long enough to
@@ -887,8 +1014,26 @@ function txAction(t) {
         if (t.raw_type === "cid_pin" && t.raw_title) return "Pinned · " + esc(t.raw_title);
         return "Raw inscription" + (t.slot ? " · L1 slot " + num(t.slot) : "");
     }
-    if (t.kind === "deploy") return "Deploy program" + (t.deploy_program ? " " + esc(progShort(t.deploy_program)) : "");
-    if (t.kind === "private") { var s = t.subtype; if (s === "shield") return "Shield (private deposit)"; if (s === "deshield") return "Deshield (private withdraw)"; return "Private transfer"; }
+    if (t.kind === "deploy") return (t.instr && t.instr._variant === "UpdateHeader" ? "Update program" : "Deploy program") + (t.deploy_program ? " " + esc(progShort(t.deploy_program)) : "");
+    // LEZ v0.3 built-ins: the instruction arrived decoded with the built-in's own enum
+    if (t.instr && t.instr._variant && t.kind !== "private") {
+        var iv = t.instr._variant, I = t.instr, A = function (x) { return x != null ? grp(x) : ""; };
+        if (name === "native_token" && iv === "Transfer") return "Transfer " + A(I.amount) + ft;
+        if (name === "clock") return "Clock tick · block #" + num(I.block_id);
+        if (name === "fee" && iv === "Distribute") return "Fee distribution · payout " + A(I.payout);
+        if (name === "fee" && iv === "Refund") return "Fee refund " + A(I.amount) + (a[1] ? " to " + accShort(a[1]) : "");
+        if (name === "bridge" && iv === "Deposit") return "Bridge deposit " + A(I.amount) + (I.recipient ? " to " + accShort(I.recipient) : "");
+        if (name === "bridge" && iv === "Withdraw") return "Bridge withdraw " + A(I.amount) + " to L1";
+        if (name === "sequencer_stake") {
+            if (iv === "Stake") return "Stake " + A(I.amount) + " for a sequencer";
+            if (iv === "UnstakeRequest") return "Request unstake of " + A(I.amount);
+            if (iv === "FinalizeUnstake") return "Unstake " + A(I.amount);
+            if (iv === "InitChannelParams") return "Set channel parameters · min stake " + A(I.minimum_sequencer_stake);
+            if (iv === "Slash") return "Slash sequencer · " + A(I.amount) + " burned"; }
+        if (name === "program_loader" && iv === "WriteSegment") return "Write program segment · " + num(I.bytes) + " bytes";
+    }
+    if (t.kind === "private") { var s = t.subtype, pa = (t.instr && t.instr.amount != null) ? grp(t.instr.amount) + " " : "";
+        if (s === "shield") return "Shield " + pa + "(private deposit)"; if (s === "deshield") return "Deshield " + pa + "(private withdraw)"; return "Private transfer"; }
     if (name === "ata") { var v = w[0] >>> 0;
         if (v === 0) return "Create " + (tok ? esc(tok) + " " : "") + "token account" + (a[0] ? " for " + accShort(a[0]) : "");
         if (v === 1) return "Transfer " + (amtS ? amtS + " " : "") + (tok ? esc(tok) + " " : "") + "via ATA" + ft;
@@ -943,7 +1088,12 @@ function txAction(t) {
         }
     }
     var pn = (name && !/^[0-9a-f]{40,}$/i.test(name)) ? name.replace(/_/g, " ") : progShort(t.program);
-    return esc(cap(pn || "program")) + (w.length ? " · variant " + (w[0] >>> 0) : "");
+    // v0.3 instructions are Borsh: an enum's variant is its leading byte
+    var vb = (!w.length && t.instruction_hex && t.instruction_hex.length >= 2) ? parseInt(t.instruction_hex.slice(0, 2), 16) : null;
+    // an unnamed program is its short id, which must keep its case (never "03db7b…" capitalised)
+    var unnamed = !(name && !/^[0-9a-f]{40,}$/i.test(name));
+    return (unnamed ? "Call " + esc(pn || "program") : esc(cap(pn || "program")))
+         + (w.length ? " · variant " + (w[0] >>> 0) : (vb !== null ? " · variant " + vb : ""));
 }
 
 // ── sparkline points (finality-lag series [unix,lag]) → polyline for a Canvas ─

@@ -7,9 +7,9 @@ import "../theme"
 //   program:<channel>:<prog>    zone:<channel>
 // — which onLinkActivated forwards to the router via `explorer.routeLink(url)`.
 //
-// routeLink also accepts `tx:<channel>:<hash>` for completeness, but nothing here emits one:
-// no zonescan transaction field references another transaction, so there is nothing for such
-// a link to point at. Rows navigate to a transaction directly via navTx() instead.
+// routeLink also accepts `tx:<channel>:<hash>`. The one emitter is the program page's
+// "Deployed in" row (LEZ v0.3), which links the deploy transaction; rows navigate to a
+// transaction directly via navTx().
 Text {
     id: root
     property var explorer: null

@@ -3,6 +3,44 @@
 All notable changes to ZoneScan Lite. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions track `metadata.json`.
 
+## [0.4.0] — 2026-10-20
+
+The Logos testnet moved to a new L1 chain (node 0.3.x, genesis 2026-10-09) and its zones to
+LEZ v0.3.1, and zonescan moved with them. A v0.3 transaction carries no instruction words: a
+built-in's instruction arrives decoded by the server, everything else as raw bytes. Until this
+release ZoneScan Lite read only the words, so every v0.3 transaction showed a bare program name
+and no instruction at all.
+
+### Changed
+
+- **LEZ v0.3 transactions read as text.** Native transfers ("Transfer 123,456,789 from … to
+  …"), bridge deposits and withdrawals, sequencer stakes and channel parameters, fee refunds and
+  distributions, clock ticks and program-loader writes each get their own line, with linked
+  accounts and grouped amounts. A deployed program's instruction shows its variant and its raw
+  bytes. A shield or deshield shows its amount, and the transaction page labels the decoded part
+  "Public effect", since the rest stays private.
+- **Fees.** The transaction page shows what a v0.3 transaction was charged, its maximum, tip and
+  gas limit, and which account paid.
+- **Deploys.** A v0.3 program arrives as bytecode segments and then a header. The header is the
+  Deploy row and links the deployed program; a segment says what it is. The transaction and
+  program pages show the image id and download the reassembled ELF. That link used the program
+  id, which the server answers with 404 since v0.3: it now uses the deploy transaction.
+- **Program pages** show where the program was deployed and its base58 address (the form
+  wallets print), and no longer offer the instruction-schema form on a v0.3 zone, whose Borsh
+  instructions that form cannot read.
+- **Search** finds a program by its 64-hex id or its base58 address, including one that has been
+  deployed but not yet called.
+- **Type badges and filters** know the v0.3 built-ins (Transfer, Bridge, Stake, Fee, Program
+  Loader, …). The Type filter offers what a v0.3 zone actually holds: transfers, shield,
+  deshield, private transfers, bridge, stake, deploys and loader writes. Token, AMM, ATA and
+  Pinata are no longer built-ins, so their chips are gone.
+- **Version badges.** Every stock release (`v0.3.1`, …) gets the website's teal badge instead of
+  the grey fallback.
+- **Zone names.** `0101…0101` is "Logos testnet", Logos' own zone since v0.3.
+- **Local zone.** A v0.3 block header is 80 bytes (the signature is gone), and every block also
+  carries the fee distribution, so the "skip blocks with nothing to show" check reads the right
+  offset and counts both system transactions.
+
 ## [0.3.4] — 2026-09-14
 
 ### Added
